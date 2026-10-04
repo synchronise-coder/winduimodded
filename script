@@ -1,7 +1,7 @@
 --[[
-WindUI Fluent skin: corrected build 1
+WindUI Fluent skin: corrected build 2
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
-Restored original widget layout and configuration defaults.
+Fluent Dark palette and Roblox avatar/name footer, with the working widget layout.
 Includes hover/drag listener cleanup and event-driven slider movement.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
@@ -28293,13 +28293,14 @@ Dark={
 Name="Dark",
 Accent=Color3.fromRGB(96,205,255),
 Primary=Color3.fromRGB(96,205,255),
-Background=Color3.fromRGB(32,32,32),
+Background=Color3.fromRGB(40,40,40),
 Dialog=Color3.fromRGB(45,45,45),
 Outline=Color3.fromRGB(90,90,90),
 Text=Color3.fromRGB(240,240,240),
 Placeholder=Color3.fromRGB(170,170,170),
-Icon=Color3.fromRGB(200,200,200),
-Button=Color3.fromRGB(60,60,60),
+Icon=Color3.fromRGB(240,240,240),
+Button=Color3.fromRGB(45,45,45),
+Hover=Color3.fromRGB(120,120,120),
 ElementDesc=Color3.fromRGB(170,170,170),
 ElementBackground=Color3.fromRGB(120,120,120),
 ElementBackgroundTransparency=0.87,
@@ -28317,7 +28318,8 @@ SliderIcon=Color3.fromRGB(170,170,170),
 PanelBackground=Color3.fromRGB(40,40,40),
 PanelBackgroundTransparency=0.35,
 LabelBackground=Color3.fromRGB(160,160,160),
-LabelBackgroundTransparency=0.92,
+LabelBackgroundTransparency=0.9,
+TabBackground=Color3.fromRGB(120,120,120),
 TabBackgroundActive=Color3.fromRGB(120,120,120),
 TabBackgroundActiveTransparency=0.87,
 TabBackgroundHover=Color3.fromRGB(120,120,120),
@@ -28326,7 +28328,7 @@ TabTextTransparency=0.15,
 TabIconTransparency=0.15,
 DropdownBackground=Color3.fromRGB(45,45,45),
 DropdownTabBackground=Color3.fromRGB(120,120,120),
-DropdownTabBorder=Color3.fromRGB(90,90,90),
+DropdownTabBorder=Color3.fromRGB(35,35,35),
 },
 
 Light={
@@ -30310,7 +30312,7 @@ Size=UDim2.new(1,0,1,0),
 ImageTransparency=1,
 Active=false,
 ThemeTag={
-ImageColor3="Text",
+ImageColor3="Hover",
 },
 Parent=av,
 },{
@@ -30340,16 +30342,14 @@ Padding=UDim.new(0,8),
 local f,g=ac(ah.UICorner,"Squircle",{
 Size=UDim2.new(1,0,0,0),
 AutomaticSize="Y",
-ImageTransparency=ah.Color and 0.05 or(not ag.Window.NewElements and 0.93 or nil),
+ImageTransparency=ah.Color and 0.05 or nil,
 
 
 
 Parent=ag.Parent,
 ThemeTag={
-ImageColor3=not ah.Color and(ag.Window.NewElements and"ElementBackground"or"Text")or nil,
-ImageTransparency=not ah.Color
-and(ag.Window.NewElements and"ElementBackgroundTransparency"or nil)
-or nil,
+ImageColor3=not ah.Color and"ElementBackground"or nil,
+ImageTransparency=not ah.Color and"ElementBackgroundTransparency"or nil,
 },
 ImageColor3=ah.Color and(typeof(ah.Color)=="string"and Color3.fromHex(
 aa.Colors[ah.Color]
@@ -37355,19 +37355,15 @@ end
 
 local d
 if aw.User then
-local function GetUserThumb()local
-f=ak:GetUserThumbnailAsync(
-aw.User.Anonymous and 1 or ak.LocalPlayer.UserId,
-Enum.ThumbnailType.HeadShot,
-Enum.ThumbnailSize.Size420x420
-)
-return f
+local function GetUserThumb()
+local f=aw.User.Anonymous and 1 or ak.LocalPlayer.UserId
+return"rbxthumb://type=AvatarHeadShot&id="..tostring(f).."&w=150&h=150"
 end
 
 d=ao("TextButton",{
 Size=UDim2.new(
 0,
-aw.UIElements.SideBarContainer.AbsoluteSize.X-(aw.UIPadding/2),
+aw.SideBarWidth-(aw.UIPadding/2),
 0,
 42+aw.UIPadding
 ),
@@ -37420,41 +37416,39 @@ CornerRadius=UDim.new(1,0),
 }),
 }),
 ao("Frame",{
-AutomaticSize="XY",
+Size=UDim2.new(1,-42-aw.UIPadding,1,0),
 BackgroundTransparency=1,
 },{
 ao("TextLabel",{
 Text=aw.User.Anonymous and"Anonymous"or ak.LocalPlayer.DisplayName,
-TextSize=17,
+TextSize=14,
 ThemeTag={
 TextColor3="Text",
 },
-FontFace=Font.new(an.Font,Enum.FontWeight.SemiBold),
-AutomaticSize="Y",
+FontFace=Font.new(an.Font,Enum.FontWeight.Medium),
 BackgroundTransparency=1,
-Size=UDim2.new(1,-27,0,0),
+Size=UDim2.new(1,0,0,18),
 TextTruncate="AtEnd",
 TextXAlignment="Left",
 Name="DisplayName",
 }),
 ao("TextLabel",{
-Text=aw.User.Anonymous and"anonymous"or ak.LocalPlayer.Name,
-TextSize=15,
-TextTransparency=0.6,
+Text=aw.User.Anonymous and"@anonymous"or"@"..ak.LocalPlayer.Name,
+TextSize=12,
 ThemeTag={
-TextColor3="Text",
+TextColor3="Placeholder",
 },
-FontFace=Font.new(an.Font,Enum.FontWeight.Medium),
-AutomaticSize="Y",
+FontFace=Font.new(an.Font,Enum.FontWeight.Regular),
 BackgroundTransparency=1,
-Size=UDim2.new(1,-27,0,0),
+Size=UDim2.new(1,0,0,16),
 TextTruncate="AtEnd",
 TextXAlignment="Left",
 Name="UserName",
 }),
 ao("UIListLayout",{
-Padding=UDim.new(0,4),
+Padding=UDim.new(0,2),
 HorizontalAlignment="Left",
+VerticalAlignment="Center",
 }),
 }),
 ao("UIListLayout",{
@@ -37498,7 +37492,7 @@ end
 aw.User.Anonymous=g
 d.UserIcon.ImageLabel.Image=GetUserThumb()
 d.UserIcon.Frame.DisplayName.Text=g and"Anonymous"or ak.LocalPlayer.DisplayName
-d.UserIcon.Frame.UserName.Text=g and"anonymous"or ak.LocalPlayer.Name
+d.UserIcon.Frame.UserName.Text=g and"@anonymous"or"@"..ak.LocalPlayer.Name
 end
 
 if aw.User.Enabled then
