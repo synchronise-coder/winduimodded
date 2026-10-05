@@ -1,5 +1,5 @@
 --[[
-WindUI Fluent skin: customization build 13
+WindUI Fluent skin: customization build 14
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
@@ -33806,6 +33806,8 @@ local ai=ae.Tween
 local ak=a.V()
 
 function aa.New(al,am,an,ao,ap)
+local CodeHeight=al.Height
+if typeof(CodeHeight)=="number"then CodeHeight=UDim.new(0,CodeHeight)end
 local aq={
 Radius=am.ElementConfig.UICorner,
 Padding=am.NewElements and am.ElementConfig.UIPadding+4 or am.ElementConfig.UIPadding,
@@ -33952,7 +33954,7 @@ local ay,az=ae.NewRoundFrame(aq.Radius,"Squircle",{
 ImageColor3=Color3.fromHex"#212121",
 ImageTransparency=0.035,
 Size=al.Height~=nil
-and UDim2.new(1,0,al.Height.Scale,al.Height.Offset==0 and-40 or al.Height.Offset)
+and UDim2.new(1,0,CodeHeight.Scale,CodeHeight.Offset==0 and-40 or CodeHeight.Offset)
 or UDim2.new(1,0,0,20+(aq.Padding*2)),
 AutomaticSize=al.Height~=nil and"None"or"Y",
 Parent=an,
