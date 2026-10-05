@@ -1,10 +1,11 @@
 --[[
-WindUI Fluent skin: customization build 10
+WindUI Fluent skin: customization build 11
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
 Content-only text size; fixed window/HUD/profile/keybind text, linked panel opacity and pinned panel toggle row, measured profile padding and automatic cached repository font download and local custom fonts.
 Large text stays inside the scrolling body; bounded header labels, font-measured stats and top-aligned side keybind panel.
+Tag background transparency is configurable in code and through Tag:SetTransparency; text and icons stay visible.
 Includes hover/drag listener cleanup and event-driven slider movement.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
@@ -28724,174 +28725,160 @@ end
 
 return aa end function a.z():typeof(__modImpl())local aa=a.cache.z if not aa then aa={c=__modImpl()}a.cache.z=aa end return aa.c end end do local function __modImpl()
 
-local aa={}
+local Tag = {}
 
-local ab=a.j()
-local ac=ab.New
-local ad=ab.Tween
+local Creator = a.j()
+local New = Creator.New
+local Tween = Creator.Tween
 
-function aa.New(ae,af,ag)
-local ah={
-Title=af.Title or"Tag",
-Icon=af.Icon,
-Color=af.Color or Color3.fromHex"#315dff",
-Radius=af.Radius or 999,
-Border=af.Border or false,
-
-TagFrame=nil,
-Height=26,
-Padding=10,
-TextSize=14,
-IconSize=16,
-}
-
-local ai
-if ah.Icon then
-ai=ab.Image(ah.Icon,ah.Icon,0,af.Window,"Tag",false)
-
-ai.Size=UDim2.new(0,ah.IconSize,0,ah.IconSize)
-ai.ImageLabel.ImageColor3=typeof(ah.Color)=="Color3"
-and ab.GetTextColorForHSB(ah.Color)
-or typeof(ah.Color)=="string"
-and(ab.GetTextColorForHSB(ab.GetThemeProperty(ah.Color,ab.Theme)))
+local function NormalizeTransparency(Value, Fallback)
+	Value = tonumber(Value)
+	if not Value or Value ~= Value then return Fallback end
+	return math.clamp(Value, 0, 1)
 end
 
-local aj=ac("TextLabel",{
-BackgroundTransparency=1,
-AutomaticSize="XY",
-TextSize=ah.TextSize,
-FontFace=Font.new(ab.Font,Enum.FontWeight.SemiBold),
-Text=ah.Title,
-TextColor3=typeof(ah.Color)=="Color3"and ab.GetTextColorForHSB(ah.Color)or typeof(
-ah.Color
-)=="string"and(ab.GetTextColorForHSB(ab.GetThemeProperty(ah.Color,ab.Theme))),
-LayoutOrder=9999,
-})
+function Tag:New(TagConfig, Parent)
+	local TagModule = {
+		Title = TagConfig.Title or "Tag",
+		Icon = TagConfig.Icon ~= "" and TagConfig.Icon or nil,
+		Color = TagConfig.Color or Color3.fromHex("#315dff"),
+		Radius = TagConfig.Radius or 999,
+		Border = TagConfig.Border or false,
+		Transparency = NormalizeTransparency(TagConfig.Transparency, 0),
+		TagFrame = nil,
+		Height = 26,
+		Padding = 10,
+		TextSize = 14,
+		IconSize = 16,
+	}
 
-local ak
+	local TagIcon
+	local BackgroundGradient
+	local TagTitle = New("TextLabel", {
+		BackgroundTransparency = 1,
+		AutomaticSize = "XY",
+		TextSize = TagModule.TextSize,
+		FontFace = Font.new(Creator.Font, Enum.FontWeight.SemiBold),
+		Text = TagModule.Title,
+		LayoutOrder = 9999,
+	})
+	if typeof(TagModule.Color) == "table" then
+		BackgroundGradient = New("UIGradient", TagModule.Color)
+	end
 
-if typeof(ah.Color)=="table"then
-ak=ac"UIGradient"
-for al,am in next,ah.Color do
-ak[al]=am
+	local TagGlass = Creator.NewRoundFrame(TagModule.Radius + 1, "SquircleGlass", {
+		Size = UDim2.new(1, 1, 1, 1),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		ThemeTag = { ImageColor3 = "White" },
+		ImageTransparency = 0.75 + 0.25 * TagModule.Transparency,
+	})
+	local Content = New("Frame", {
+		Size = UDim2.new(0, 0, 1, 0),
+		AutomaticSize = "X",
+		Name = "Content",
+		BackgroundTransparency = 1,
+	}, {
+		TagTitle,
+		New("UIPadding", {
+			PaddingLeft = UDim.new(0, TagModule.Padding),
+			PaddingRight = UDim.new(0, TagModule.Padding),
+		}),
+		New("UIListLayout", {
+			FillDirection = "Horizontal",
+			VerticalAlignment = "Center",
+			Padding = UDim.new(0, TagModule.Padding / 1.5),
+		}),
+	})
+	local TagFrame = Creator.NewRoundFrame(TagModule.Radius, "Squircle", {
+		AutomaticSize = "X",
+		Size = UDim2.new(0, 0, 0, TagModule.Height),
+		Parent = Parent,
+		ImageColor3 = typeof(TagModule.Color) == "Color3" and TagModule.Color
+			or typeof(TagModule.Color) == "table" and Color3.new(1, 1, 1) or nil,
+		ImageTransparency = TagModule.Transparency,
+		ThemeTag = typeof(TagModule.Color) == "string" and { ImageColor3 = TagModule.Color } or nil,
+	}, {
+		BackgroundGradient,
+		TagGlass,
+		Content,
+	})
+	TagModule.TagFrame = TagFrame
+
+	local function UpdateTextColor()
+		local Color = BackgroundGradient and Creator.GetAverageColor(BackgroundGradient)
+			or Creator.GetThemeProperty(TagModule.Color)
+		if typeof(Color) ~= "Color3" then Color = Color3.fromHex("#315dff") end
+		local Background = Creator.GetThemeProperty("WindowBackground")
+		if typeof(Background) == "table" and Background.Color then
+			Background = Creator.GetAverageColor(Background)
+		end
+		if typeof(Background) ~= "Color3" then Background = Color3.fromRGB(40, 40, 40) end
+		local Alpha = TagModule.Transparency
+		local VisibleColor = Color3.new(
+			Color.R * (1 - Alpha) + Background.R * Alpha,
+			Color.G * (1 - Alpha) + Background.G * Alpha,
+			Color.B * (1 - Alpha) + Background.B * Alpha
+		)
+		local TextColor = Creator.GetTextColorForHSB(VisibleColor)
+		TagTitle.TextColor3 = TextColor
+		if TagIcon then TagIcon.ImageLabel.ImageColor3 = TextColor end
+	end
+
+	function TagModule:SetTitle(Text)
+		self.Title = Text
+		TagTitle.Text = Text
+		return self
+	end
+
+	function TagModule:SetTransparency(Value)
+		self.Transparency = NormalizeTransparency(Value, self.Transparency)
+		Tween(TagFrame, 0.06, { ImageTransparency = self.Transparency }):Play()
+		Tween(TagGlass, 0.06, { ImageTransparency = 0.75 + 0.25 * self.Transparency }):Play()
+		UpdateTextColor()
+		return self
+	end
+
+	function TagModule:SetColor(Color)
+		self.Color = Color
+		if typeof(Color) == "table" then
+			if not BackgroundGradient then BackgroundGradient = New("UIGradient", { Parent = TagFrame }) end
+			for Key, Value in pairs(Color) do BackgroundGradient[Key] = Value end
+			Creator.SetThemeTag(TagFrame, { ImageColor3 = Color3.new(1, 1, 1) }, 0.06)
+		else
+			if BackgroundGradient then BackgroundGradient:Destroy(); BackgroundGradient = nil end
+			Creator.SetThemeTag(TagFrame, { ImageColor3 = Color }, 0.06)
+		end
+		UpdateTextColor()
+		return self
+	end
+
+	function TagModule:SetIcon(Icon)
+		self.Icon = Icon ~= "" and Icon or nil
+		if TagIcon then TagIcon:Destroy(); TagIcon = nil end
+		if self.Icon then
+			TagIcon = Creator.Image(self.Icon, self.Icon, 0, TagConfig.Window, "Tag", false)
+			TagIcon.Size = UDim2.new(0, self.IconSize, 0, self.IconSize)
+			TagIcon.Parent = Content
+		end
+		UpdateTextColor()
+		return self
+	end
+
+	function TagModule:Destroy()
+		TagFrame:Destroy()
+		return self
+	end
+
+	local ThemeConnection = Creator:OnThemeChange(UpdateTextColor)
+	Creator.AddSignal(TagFrame.Destroying, function()
+		if ThemeConnection then ThemeConnection:Disconnect() end
+	end)
+	TagModule:SetIcon(TagModule.Icon)
+	return TagModule
 end
 
-aj.TextColor3=ab.GetTextColorForHSB(ab.GetAverageColor(ak))
-if ai then
-ai.ImageLabel.ImageColor3=ab.GetTextColorForHSB(ab.GetAverageColor(ak))
-end
-end
-
-local al=ab.NewRoundFrame(ah.Radius,"Squircle",{
-AutomaticSize="X",
-Size=UDim2.new(0,0,0,ah.Height),
-Parent=ag,
-ImageColor3=typeof(ah.Color)=="Color3"and ah.Color
-or typeof(ah.Color)=="table"and Color3.new(1,1,1)
-or nil,
-ThemeTag=typeof(ah.Color)=="string"and{
-ImageColor3=ah.Color,
-},
-},{
-ak,
-ab.NewRoundFrame(ah.Radius+1,"SquircleGlass",{
-Size=UDim2.new(1,1,1,1),
-AnchorPoint=Vector2.new(0.5,0.5),
-Position=UDim2.new(0.5,0,0.5,0),
-ThemeTag={
-ImageColor3="White",
-},
-ImageTransparency=0.75,
-}),
-ac("Frame",{
-Size=UDim2.new(0,0,1,0),
-AutomaticSize="X",
-Name="Content",
-BackgroundTransparency=1,
-},{
-ai,
-aj,
-ac("UIPadding",{
-PaddingLeft=UDim.new(0,ah.Padding),
-PaddingRight=UDim.new(0,ah.Padding),
-}),
-ac("UIListLayout",{
-FillDirection="Horizontal",
-VerticalAlignment="Center",
-Padding=UDim.new(0,ah.Padding/1.5),
-}),
-}),
-})
-
-function ah.SetTitle(am,an)
-ah.Title=an
-aj.Text=an
-
-return ah
-end
-
-function ah.SetColor(am,an)
-ah.Color=an
-if typeof(an)=="table"then
-local ao=ab.GetAverageColor(an)
-ad(aj,0.06,{TextColor3=ab.GetTextColorForHSB(ao)}):Play()
-local ap=al:FindFirstChildOfClass"UIGradient"or ac("UIGradient",{Parent=al})
-for aq,ar in next,an do
-ap[aq]=ar
-end
-ad(al,0.06,{ImageColor3=Color3.new(1,1,1)}):Play()
-else
-if ak then
-ak:Destroy()
-end
-ad(aj,0.06,{TextColor3=ab.GetTextColorForHSB(an)}):Play()
-if ai then
-ad(ai.ImageLabel,0.06,{ImageColor3=ab.GetTextColorForHSB(an)}):Play()
-end
-ad(al,0.06,{ImageColor3=an}):Play()
-end
-
-return ah
-end
-
-function ah.SetIcon(am,an)
-ah.Icon=an
-
-if ai then
-ai:Destroy()
-ai=nil
-end
-
-if an then
-ai=ab.Image(an,an,0,af.Window,"Tag",false)
-
-ai.Size=UDim2.new(0,ah.IconSize,0,ah.IconSize)
-ai.Parent=al:FindFirstChild"Content"
-
-if typeof(ah.Color)=="Color3"then
-ai.ImageLabel.ImageColor3=ab.GetTextColorForHSB(ah.Color)
-elseif typeof(ah.Color)=="table"then
-ai.ImageLabel.ImageColor3=ab.GetTextColorForHSB(ab.GetAverageColor(ak))
-end
-end
-return ah
-end
-
-function ah.Destroy(am)
-al:Destroy()
-return ah
-end
-
-ab:OnThemeChange(function(am,an)
-aj.TextColor3=ab.GetTextColorForHSB(ab.GetThemeProperty(ah.Color,ab.Theme))
-ai.ImageLabel.ImageColor3=
-ab.GetTextColorForHSB(ab.GetThemeProperty(ah.Color,ab.Theme))
-end)
-
-return ah
-end
-
-return aa end function a.A():typeof(__modImpl())local aa=a.cache.A if not aa then aa={c=__modImpl()}a.cache.A=aa end return aa.c end end do local function __modImpl()
+return Tag end function a.A():typeof(__modImpl())local aa=a.cache.A if not aa then aa={c=__modImpl()}a.cache.A=aa end return aa.c end end do local function __modImpl()
 
 local aa=(cloneref or clonereference or function(aa)return aa end)
 
