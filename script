@@ -1,9 +1,9 @@
 --[[
-WindUI Fluent skin: customization build 7
+WindUI Fluent skin: customization build 8
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
-Content-only text size; fixed window/HUD/profile/keybind text, linked panel opacity and pinned panel toggle row, measured profile padding and local custom fonts.
+Content-only text size; fixed window/HUD/profile/keybind text, linked panel opacity and pinned panel toggle row, measured profile padding and automatic cached Tahoma download and local custom fonts.
 Includes hover/drag listener cleanup and event-driven slider movement.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
@@ -25129,31 +25129,72 @@ table.insert(p.FontObjects,r)
 r.FontFace=Font.new(p.Font,r.FontFace.Weight,r.FontFace.Style)
 end
 
-function p.ResolveFont(r)
-if typeof(r)=="Font"then return r.Family end
-if type(r)=="table"and r.File~=nil then
-local u,v=pcall(function()
-local u=r.File
+local function IsFontData(r,u)
+if type(r)~="string"or#r<12 or#r>5242880 then return false end
+if u and#r~=u then return false end
+local v=r:sub(1,4)
+return v=="\0\1\0\0"or v=="OTTO"or v=="true"
+end
+
+function p.LoadFontFile(r)
+local u,v=r.File,r.Url
 assert(type(u)=="string"and(u:lower():match"%.ttf$"or u:lower():match"%.otf$"),"Font.File must be a .ttf or .otf path")
 assert(type(getcustomasset)=="function"and type(writefile)=="function","local fonts require getcustomasset and writefile support")
-if type(isfile)=="function"then assert(isfile(u),"font file not found: "..u)end
-local v=getcustomasset(u)
-assert(type(v)=="string"and v~="","getcustomasset could not register the font file")
+if v~=nil then assert(type(v)=="string"and v:match"^https://","Font.Url must be an HTTPS raw font URL")end
 local x=r.Style or"normal"
 assert(x=="normal"or x=="italic","Font.Style must be normal or italic")
 local z=tonumber(r.Weight)or 400
 assert(z==z and z>=100 and z<=900,"Font.Weight must be between 100 and 900")
-local A=u..".windui-family.json"
-writefile(A,h:JSONEncode{
+local A=r.ExpectedSize
+if A~=nil then
+assert(type(A)=="number"and A>=12 and A<=5242880 and A%1==0,"Font.ExpectedSize must be a valid font byte count")
+end
+local B=table.concat({u,tostring(r.Name or""),tostring(v or""),tostring(z),x,tostring(A or"")},"\0")
+local C=v~=nil and r.Cache~=false
+if C and p.FontFileFamilies and p.FontFileFamilies[B]then return p.FontFileFamilies[B]end
+local F=type(isfile)=="function"and isfile(u)
+if type(readfile)=="function"then
+local G,H=pcall(readfile,u)
+F=G and IsFontData(H,A)
+end
+if v and not F then
+local G=game:HttpGet(v)
+assert(IsFontData(G,A),"font download returned invalid or incomplete font data")
+writefile(u,G)
+end
+if type(isfile)=="function"then assert(isfile(u),"font file not found: "..u)end
+local G=getcustomasset(u)
+assert(type(G)=="string"and G~="","getcustomasset could not register the font file")
+local H=u..".windui-family.json"
+local J=h:JSONEncode{
 name=tostring(r.Name or u:match"([^/\\]+)%.[^.]+$"or"Custom font"),
-faces={{name="Custom",weight=z,style=x,assetId=v}},
-})
-local B=getcustomasset(A)
-assert(type(B)=="string"and B~="","getcustomasset could not register the font family")
-local C=game:GetService"TextService":GetFamilyInfoAsync(B)
-assert(type(C)=="table"and type(C.Faces)=="table"and#C.Faces>0,"Roblox could not load the registered font family")
-return Font.new(B).Family
-end)
+faces={{name="Regular",weight=z,style=x,assetId=G}},
+}
+local L,M=false
+if type(readfile)=="function"then L,M=pcall(readfile,H)end
+if not L or M~=J then writefile(H,J)end
+local N=getcustomasset(H)
+assert(type(N)=="string"and N~="","getcustomasset could not register the font family")
+local O=game:GetService"TextService":GetFamilyInfoAsync(N)
+assert(type(O)=="table"and type(O.Faces)=="table"and#O.Faces>0,"Roblox could not load the registered font family")
+local P=Font.new(N).Family
+if C then
+p.FontFileFamilies=p.FontFileFamilies or{}
+p.FontFileFamilies[B]=P
+end
+return P
+end
+
+function p.ResolveFont(r)
+if typeof(r)=="Font"then return r.Family end
+if type(r)=="string"and r:match"^%s*(.-)%s*$":lower()=="tahoma"then
+r={
+File="tahoma.ttf",Name="Tahoma",ExpectedSize=310752,
+Url="https://raw.githubusercontent.com/sametexe001/luas/refs/heads/main/fonts/tahoma.ttf",
+}
+end
+if type(r)=="table"and r.File~=nil then
+local u,v=pcall(p.LoadFontFile,r)
 if u then return v end
 warn("[ WindUI.Font ] "..tostring(v)..". Keeping the current font.")
 return nil
