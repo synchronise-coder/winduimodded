@@ -1,11 +1,12 @@
 --[[
-WindUI Fluent skin: customization build 11
+WindUI Fluent skin: customization build 12
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
 Content-only text size; fixed window/HUD/profile/keybind text, linked panel opacity and pinned panel toggle row, measured profile padding and automatic cached repository font download and local custom fonts.
 Large text stays inside the scrolling body; bounded header labels, font-measured stats and top-aligned side keybind panel.
 Tag background transparency is configurable in code and through Tag:SetTransparency; text and icons stay visible.
+Shared standalone/inline keybind routing, drag-only movement listeners, viewport/modal cleanup and anonymous profile/stats.
 Includes hover/drag listener cleanup and event-driven slider movement.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
@@ -25646,114 +25647,59 @@ function p.SetDraggable(v)
 p.CanDraggable=v
 end
 
-function p.Drag(v,x,z)
-local A=m.GenerateGUID()
+function p.Drag(Frame, Handles, OnDrag)
+	local Token = m.GenerateGUID()
+	local Drag = { CanDraggable = true }
+	local ActiveInput, StartInput, StartPosition, ActiveHandle
+	local MoveConnection, EndConnection, FocusConnection, LastTween
+	if not Handles or typeof(Handles) ~= "table" then Handles = { Frame } end
 
-local B
-local C=false
-local F,G
-local H
-
-local J={
-CanDraggable=true,
-}
-
-if not x or typeof(x)~="table"then
-x={v}
-end
-
-local function update(L)
-if not C or not J.CanDraggable then
-return
-end
-
-local M=L.Position-F
-p.Tween(v,0.02,{
-Position=UDim2.new(
-G.X.Scale,
-G.X.Offset+M.X,
-G.Y.Scale,
-G.Y.Offset+M.Y
-),
-}):Play()
-end
-
-for L,M in pairs(x)do
-p.AddSignal(M.InputBegan,function(N)
-if not J.CanDraggable or C then
-return
-end
-
-if
-N.UserInputType==Enum.UserInputType.MouseButton1
-or N.UserInputType==Enum.UserInputType.Touch
-then
-if m and m.CurrentInput and m.CurrentInput~=A then
-return
-end
-
-m.CurrentInput=A
-
-C=true
-H=N
-B=M
-F=N.Position
-G=v.Position
-
-if z and typeof(z)=="function"then
-z(true,B)
-end
-end
-end)
-end
-
-p.AddSignal(e.InputChanged,function(L)
-if not C then
-return
-end
-if m.CurrentInput and m.CurrentInput~=A then
-return
-end
-
-if H.UserInputType==Enum.UserInputType.MouseButton1 then
-if L.UserInputType==Enum.UserInputType.MouseMovement then
-update(L)
-end
-elseif H.UserInputType==Enum.UserInputType.Touch then
-if L==H then
-update(L)
-end
-end
-end)
-
-p.AddSignal(e.InputEnded,function(L)
-if not C or m.CurrentInput~=A then
-return
-end
-
-if
-L==H
-or(
-H.UserInputType==Enum.UserInputType.MouseButton1
-and L.UserInputType==Enum.UserInputType.MouseButton1
-)
-then
-m.CurrentInput=nil
-C=false
-H=nil
-B=nil
-
-if z and typeof(z)=="function"then
-z(false,nil)
-end
-end
-end)
-
-function J.Set(L,M)
-J.CanDraggable=M
-end
-
-return J
+	local function Stop()
+		local WasDragging = ActiveInput ~= nil
+		ActiveInput, ActiveHandle = nil, nil
+		if MoveConnection then MoveConnection:Disconnect(); MoveConnection = nil end
+		if EndConnection then EndConnection:Disconnect(); EndConnection = nil end
+		if FocusConnection then FocusConnection:Disconnect(); FocusConnection = nil end
+		if LastTween then LastTween:Cancel(); LastTween = nil end
+		if m.CurrentInput == Token then m.CurrentInput = nil end
+		if WasDragging and typeof(OnDrag) == "function" then p.SafeCallback(OnDrag, false, nil) end
+	end
+	for Index, Handle in ipairs(Handles) do
+		p.AddSignal(Handle.InputBegan, function(Input)
+			if not Drag.CanDraggable or ActiveInput then return end
+			if Input.UserInputType ~= Enum.UserInputType.MouseButton1 and Input.UserInputType ~= Enum.UserInputType.Touch then return end
+			if m.CurrentInput and m.CurrentInput ~= Token then return end
+			m.CurrentInput = Token
+			ActiveInput, ActiveHandle = Input, Handle
+			StartInput, StartPosition = Input.Position, Frame.Position
+			MoveConnection = e.InputChanged:Connect(function(Changed)
+				if not ActiveInput or not Drag.CanDraggable or m.CurrentInput ~= Token then return end
+				if ActiveInput.UserInputType == Enum.UserInputType.Touch then
+					if Changed ~= ActiveInput then return end
+				elseif Changed.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+				local Delta = Changed.Position - StartInput
+				if LastTween then LastTween:Cancel() end
+				LastTween = p.Tween(Frame, 0.02, { Position = UDim2.new(
+					StartPosition.X.Scale, StartPosition.X.Offset + Delta.X,
+					StartPosition.Y.Scale, StartPosition.Y.Offset + Delta.Y
+				) })
+				LastTween:Play()
+			end)
+			EndConnection = e.InputEnded:Connect(function(Ended)
+				if not ActiveInput then return end
+				if Ended == ActiveInput or ActiveInput.UserInputType == Enum.UserInputType.MouseButton1
+					and Ended.UserInputType == Enum.UserInputType.MouseButton1 then Stop() end
+			end)
+			FocusConnection = e.WindowFocusReleased:Connect(Stop)
+			if typeof(OnDrag) == "function" then p.SafeCallback(OnDrag, true, ActiveHandle) end
+		end)
+	end
+	Frame.Destroying:Connect(function() Drag.CanDraggable = false; Stop() end)
+	function Drag:Set(Enabled)
+		self.CanDraggable = Enabled
+		if not Enabled then Stop() end
+	end
+	return Drag
 end
 
 l.Init(r,"Icon")
@@ -29589,7 +29535,7 @@ function ag.SetRole(au,av,aw)au.Role=av;if aw~=nil then au.RoleColor=aw end;au:R
 function ag.SetRoleColor(au,av)au.RoleColor=av;au:Refresh();return au end
 function ag.SetExpires(au,av,aw)au.Expires=av;if aw~=nil then au.ExpiresColor=aw end;au:Refresh();StartExpiry();return au end
 function ag.SetExpiresColor(au,av)au.ExpiresColor=av;au:Refresh();return au end
-function ag.SetAnonymous(au,av)au.Anonymous=av~=false;au:Refresh();return au end
+function ag.SetAnonymous(au,av)au.Anonymous=av~=false;au:Refresh();if af.StatsBar and af.StatsBar.Refresh then af.StatsBar:Refresh()end;return au end
 function ag.Enable(au)
 au.Enabled=true
 am.Visible=true
@@ -29770,7 +29716,7 @@ ak:Refresh()
 elseif aj=="Backspace"or aj=="Delete"then
 ag.Picking=nil
 ak:Set"None"
-elseif ac.Normalize(aj)~="None"then
+elseif ac.Normalize(aj)~="None"and(not ak.Options.Blacklist or not ak.Options.Blacklist[aj])then
 ag.Picking=nil
 ak:Set(aj)
 end
@@ -30003,8 +29949,9 @@ function ai.Refresh(at)
 if not an then return end
 local au=ah.Name
 if type(au)=="function"then local av,aw=pcall(au);au=av and aw or nil end
-ar[1].Text=tostring(au or af.User.Name or ad.DisplayName)
-ar[2].Text=ad.Name
+local Anonymous=af.User and af.User.Anonymous==true
+ar[1].Text=Anonymous and"Anonymous"or tostring(au or af.User.Name or ad.DisplayName)
+ar[2].Text=Anonymous and"anonymous"or ad.Name
 ar[5].Text=ae.FormatTime(time()-aj)
 aa.SetThemeTag(aq,{BackgroundColor3=ab.Color(ah.BackgroundColor,aa.GetThemeProperty"Dialog")})
 aq.BackgroundTransparency=math.clamp(tonumber(ah.Transparency)or 0.04,0,1)
@@ -32575,206 +32522,100 @@ return an.__type,an
 end
 
 return ad end function a.P():typeof(__modImpl())local aa=a.cache.P if not aa then aa={c=__modImpl()}a.cache.P=aa end return aa.c end end do local function __modImpl()
+local Creator = a.j()
+local New = Creator.New
+local Label = a.y().New
+local CreateElement = a.I()
+local InlineKeybind = a.E()
 
-local aa=(cloneref or clonereference or function(aa)
-return aa
-end)
+local Element = {}
 
-local ab=aa(game:GetService"UserInputService")
+function Element:New(Config)
+	local Keybind = {
+		__type = "Keybind",
+		Title = Config.Title or "Keybind",
+		Desc = Config.Desc,
+		Locked = Config.Locked or false,
+		LockedTitle = Config.LockedTitle,
+		Value = InlineKeybind.Normalize(Config.Value or "F"),
+		Callback = Config.Callback or function() end,
+		CanChange = Config.CanChange ~= false,
+		Blacklist = Config.Blacklist or {},
+		Picking = false,
+		UIElements = {},
+	}
+	Keybind.KeybindFrame = CreateElement({
+		Title = Keybind.Title, Desc = Keybind.Desc, Parent = Config.Parent,
+		TextOffset = 85, Hover = Keybind.CanChange, Tab = Config.Tab,
+		Index = Config.Index, Window = Config.Window, ElementTable = Keybind,
+		ParentConfig = Config, Tags = Config.Tags,
+	})
+	local Main = Keybind.KeybindFrame.UIElements.Main
+	local Picker = Label(Keybind.Value, nil, Main, nil, Config.Window.NewElements and 12 or 10)
+	Keybind.UIElements.Keybind = Picker
+	Picker.AnchorPoint = Vector2.new(1, 0.5)
+	Picker.Position = UDim2.new(1, 0, 0.5, 0)
+	Picker.Interactable = false
+	New("UIScale", { Parent = Picker, Scale = 0.85 })
 
-local ac=a.j()
-local ad=ac.New local ae=
-ac.Tween
-
-local af={
-UICorner=6,
-UIPadding=8,
-}
-
-local ag=a.y().New
-
-function af.New(ah,ai)
-local function NormalizeKeyCode(aj)
-if typeof(aj)=="EnumItem"then
-return aj.Name
-elseif type(aj)=="string"then
-return aj
-else
-return"F"
-end
-end
-
-local aj={
-__type="Keybind",
-Title=ai.Title or"Keybind",
-Desc=ai.Desc or nil,
-Locked=ai.Locked or false,
-LockedTitle=ai.LockedTitle,
-Value=NormalizeKeyCode(ai.Value)or"F",
-Callback=ai.Callback or function()end,
-CanChange=ai.CanChange~=false,
-Blacklist=ai.Blacklist or{},
-Picking=false,
-UIElements={},
-}
-
-local ak={}
-
-for al,am in next,aj.Blacklist do
-table.insert(ak,Enum.KeyCode[NormalizeKeyCode(am)])
-end
-table.insert(ak,Enum.KeyCode[NormalizeKeyCode"Escape"])
-
-local al=true
-
-aj.KeybindFrame=a.I(){
-Title=aj.Title,
-Desc=aj.Desc,
-Parent=ai.Parent,
-TextOffset=85,
-Hover=aj.CanChange,
-Tab=ai.Tab,
-Index=ai.Index,
-Window=ai.Window,
-ElementTable=aj,
-ParentConfig=ai,
-Tags=ai.Tags,
-}
-
-aj.UIElements.Keybind=ag(
-aj.Value,
-nil,
-aj.KeybindFrame.UIElements.Main,
-nil,
-ai.Window.NewElements and 12 or 10
-)
-
-aj.UIElements.Keybind.Size=
-UDim2.new(0,24+aj.UIElements.Keybind.Frame.Frame.TextLabel.TextBounds.X,0,42)
-aj.UIElements.Keybind.AnchorPoint=Vector2.new(1,0.5)
-aj.UIElements.Keybind.Position=UDim2.new(1,0,0.5,0)
-aj.UIElements.Keybind.Interactable=false
-
-ad("UIScale",{
-Parent=aj.UIElements.Keybind,
-Scale=0.85,
-})
-
-ac.AddSignal(
-aj.UIElements.Keybind.Frame.Frame.TextLabel:GetPropertyChangedSignal"TextBounds",
-function()
-aj.UIElements.Keybind.Size=
-UDim2.new(0,24+aj.UIElements.Keybind.Frame.Frame.TextLabel.TextBounds.X,0,42)
-end
-)
-
-function aj.Lock(am)
-aj.Locked=true
-al=false
-return aj.KeybindFrame:Lock(aj.LockedTitle)
-end
-function aj.Unlock(am)
-aj.Locked=false
-al=true
-return aj.KeybindFrame:Unlock()
+	local Router = InlineKeybind.Router(Config.Window)
+	local Blacklist = {}
+	for Index, Value in ipairs(Keybind.Blacklist) do Blacklist[InlineKeybind.Normalize(Value)] = true end
+	local Record = {
+		Owner = Keybind, Value = Keybind.Value, Down = false,
+		Options = { IgnoreProcessed = Config.IgnoreProcessed ~= false, Blacklist = Blacklist },
+		OnPress = function() Creator.SafeCallback(Keybind.Callback, Keybind.Value) end,
+	}
+	function Record:Refresh()
+		Keybind.Picking = Router.Picking == self
+		Picker.Frame.Frame.TextLabel.Text = Keybind.Picking and "..." or (self.Value == "None" and "_" or self.Value)
+		Picker.Size = UDim2.new(0, 24 + Picker.Frame.Frame.TextLabel.TextBounds.X, 0, 42)
+		Router:RefreshList()
+	end
+	function Record:Set(Value)
+		self.Value = InlineKeybind.Normalize(Value)
+		self.Down = false
+		Keybind.Value = self.Value
+		self:Refresh()
+		return self.Value
+	end
+	function Keybind:Set(Value) return Record:Set(Value) end
+	function Keybind:Lock()
+		self.Locked = true
+		Record.Down = false
+		if Router.Picking == Record then Router.Picking = nil; Record:Refresh() end
+		return self.KeybindFrame:Lock(self.LockedTitle)
+	end
+	function Keybind:Unlock()
+		self.Locked = false
+		return self.KeybindFrame:Unlock()
+	end
+	Creator.AddSignal(Main.MouseButton1Click, function()
+		if Keybind.Locked or not Keybind.CanChange or Config.Window.Destroyed then return end
+		local Previous = Router.Picking
+		Router.Picking = Record
+		if Previous and Previous ~= Record then Previous:Refresh() end
+		Record:Refresh()
+	end)
+	Creator.AddSignal(Picker.Frame.Frame.TextLabel:GetPropertyChangedSignal("TextBounds"), function()
+		Picker.Size = UDim2.new(0, 24 + Picker.Frame.Frame.TextLabel.TextBounds.X, 0, 42)
+	end)
+	Main.Destroying:Connect(function()
+		if Router.Picking == Record then Router.Picking = nil end
+		local Index = table.find(Router.Records, Record)
+		if Index then table.remove(Router.Records, Index) end
+		if Record.Row then Record.Row:Destroy() end
+		Record.Down = false
+		Keybind.Picking = false
+		Router:RefreshList()
+	end)
+	table.insert(Router.Records, Record)
+	Record:Refresh()
+	if Keybind.Locked then Keybind:Lock() end
+	return Keybind.__type, Keybind
 end
 
-function aj.Set(am,an)
-local ao=NormalizeKeyCode(an)
-aj.Value=ao
-aj.UIElements.Keybind.Frame.Frame.TextLabel.Text=ao
-end
-
-if aj.Locked then
-aj:Lock()
-end
-
-local am
-
-ac.AddSignal(aj.KeybindFrame.UIElements.Main.MouseButton1Click,function()
-if al then
-if aj.CanChange then
-aj.Picking=true
-aj.UIElements.Keybind.Frame.Frame.TextLabel.Text="..."
-
-
-
-local an
-an=ab.InputBegan:Connect(function(ao)
-local ap
-
-if ao.UserInputType==Enum.UserInputType.Keyboard then
-if table.find(ak,ao.KeyCode)then
-ap=nil
-return
-else
-ap=ao.KeyCode.Name
-end
-elseif
-ao.UserInputType==Enum.UserInputType.MouseButton1
-and not table.find(ak,"MouseLeftButton")
-then
-ap="MouseLeftButton"
-elseif
-ao.UserInputType==Enum.UserInputType.MouseButton2
-and not table.find(ak,"MouseRightButton")
-then
-ap="MouseRightButton"
-end
-
-if am then
-am:Disconnect()
-end
-
-am=ab.InputEnded:Connect(function(aq)
-if
-ap
-and(
-aq.KeyCode.Name==ap
-or ap=="MouseLeft"and aq.UserInputType==Enum.UserInputType.MouseButton1
-or ap=="MouseRight"and aq.UserInputType==Enum.UserInputType.MouseButton2
-)
-then
-aj.Picking=false
-
-aj.UIElements.Keybind.Frame.Frame.TextLabel.Text=ap
-aj.Value=ap
-
-an:Disconnect()
-am:Disconnect()
-end
-end)
-end)
-end
-end
-end)
-
-ac.AddSignal(ab.InputBegan,function(an,ao)
-if ab:GetFocusedTextBox()then
-return
-end
-if not al then
-return
-end
-if aj.Picking then
-return
-end
-
-if an.UserInputType==Enum.UserInputType.Keyboard then
-if an.KeyCode.Name==aj.Value then
-ac.SafeCallback(aj.Callback,an.KeyCode.Name)
-end
-elseif an.UserInputType==Enum.UserInputType.MouseButton1 and aj.Value=="MouseLeft"then
-ac.SafeCallback(aj.Callback,"MouseLeft")
-elseif an.UserInputType==Enum.UserInputType.MouseButton2 and aj.Value=="MouseRight"then
-ac.SafeCallback(aj.Callback,"MouseRight")
-end
-end)
-
-return aj.__type,aj
-end
-
-return af end function a.Q():typeof(__modImpl())local aa=a.cache.Q if not aa then aa={c=__modImpl()}a.cache.Q=aa end return aa.c end end do local function __modImpl()
+return Element end function a.Q():typeof(__modImpl())local aa=a.cache.Q if not aa then aa={c=__modImpl()}a.cache.Q=aa end return aa.c end end do local function __modImpl()
 
 local aa=a.j()local ab=
 aa.New local ac=
@@ -34320,7 +34161,7 @@ al.ParentType=="HStack"or al.ParentType=="Group"
 if aq and ao.CodeFrameModule then
 ao.CodeFrameModule:SetType(aq)
 
-print(aq)
+
 ao.TopbarFrameModule:SetType(
 table.find({"Squircle-BL-BR","SquircleH-BL-BR"},aq)~=nil and"Square"or aq
 )
@@ -34361,9 +34202,8 @@ UICorner=9,
 
 }
 
-local at
-
 function as.Colorpicker(au,av,aw,ax,ay)
+local at
 local az={
 __type="Colorpicker",
 Title=av.Title,
@@ -34377,6 +34217,14 @@ TextPadding=10,
 }
 
 local aA={}
+local N=ax.GenerateGUID()
+local function CleanupColorpickerInputs()
+for Index,Connection in pairs(aA)do Connection:Disconnect()end
+table.clear(aA)
+av.IsShowed=false
+at=nil
+if ax.CurrentInput==N then ax.CurrentInput=nil end
+end
 local aB=az.Transparency~=nil
 
 function az.SetHSVFromRGB(b,d)
@@ -34751,11 +34599,7 @@ local H={
 Title="Cancel",
 Variant="Secondary",
 Callback=function()
-av.IsShowed=false
-for H,J in next,aA do
-J:Disconnect()
-end
-aA={}
+CleanupColorpickerInputs()
 end,
 },
 {
@@ -34763,11 +34607,7 @@ Title="Apply",
 
 Variant="Primary",
 Callback=function()
-av.IsShowed=false
-for H,J in next,aA do
-J:Disconnect()
-end
-aA={}
+CleanupColorpickerInputs()
 
 ay(Color3.fromHSV(az.Hue,az.Sat,az.Vib),az.Transparency)
 end,
@@ -34998,7 +34838,7 @@ O.Transparency=1-((R-P)/(Q-P))
 O:Update()
 end
 
-local N=ax.GenerateGUID()
+d.UIElements.Main.Destroying:Connect(CleanupColorpickerInputs)
 
 table.insert(
 aA,
@@ -35641,7 +35481,8 @@ al.Window.Folder,
 "Image",
 false
 )
-if an and an.Parent then
+if an then
+am.ElementFrame=an
 an.Parent=al.Parent
 an.Size=UDim2.new(1,0,0,0)
 an.BackgroundTransparency=1
@@ -36026,9 +35867,35 @@ and au.Y<=av.Y+aw.Y
 end
 
 local au=an.WindUI.GenerateGUID()
+local ViewportConnections={}
+local OwnCamera=an.Camera==nil
+local SavedScrolling
+local function ConnectViewport(Signal,Callback)
+local Connection=Signal:Connect(Callback)
+table.insert(ViewportConnections,Connection)
+return Connection
+end
+local function StopViewportInput()
+ap=false
+aq=false
+if an.WindUI.CurrentInput==au then an.WindUI.CurrentInput=nil end
+if SavedScrolling~=nil and an.Tab and an.Tab.UIElements and an.Tab.UIElements.ContainerFrame then
+an.Tab.UIElements.ContainerFrame.ScrollingEnabled=SavedScrolling
+SavedScrolling=nil
+end
+end
+at.Destroying:Connect(function()
+StopViewportInput()
+for Index,Connection in pairs(ViewportConnections)do Connection:Disconnect()end
+table.clear(ViewportConnections)
+if OwnCamera then ao.Camera:Destroy()end
+end)
+ai.AddSignal(at.CanvasGroup.Viewport.MouseLeave,StopViewportInput)
+ConnectViewport(ae.WindowFocusReleased,StopViewportInput)
 
 ai.AddSignal(at.CanvasGroup.Viewport.MouseEnter,function()
 if ao.Interactive then
+if SavedScrolling==nil then SavedScrolling=an.Tab.UIElements.ContainerFrame.ScrollingEnabled end
 an.Tab.UIElements.ContainerFrame.ScrollingEnabled=false
 end
 end)
@@ -36038,7 +35905,7 @@ if
 av.UserInputType==Enum.UserInputType.MouseMovement
 or av.UserInputType==Enum.UserInputType.Touch
 then
-an.Tab.UIElements.ContainerFrame.ScrollingEnabled=true
+StopViewportInput()
 end
 end)
 
@@ -36060,7 +35927,7 @@ end
 end
 end)
 
-ai.AddSignal(ae.InputEnded,function(av)
+ConnectViewport(ae.InputEnded,function(av)
 if ao.Interactive then
 if
 av.UserInputType==Enum.UserInputType.MouseButton1
@@ -36077,7 +35944,7 @@ end
 end
 end)
 
-ai.AddSignal(ae.InputChanged,function(av)
+ConnectViewport(ae.InputChanged,function(av)
 if ao.Interactive and ap and not aq then
 if
 av.UserInputType==Enum.UserInputType.MouseMovement
@@ -36111,7 +35978,8 @@ end
 end
 end)
 
-ai.AddSignal(ae.TouchPinch,function(av,aw,ax,ay)
+ConnectViewport(ae.TouchPinch,function(av,aw,ax,ay)
+if not ao.Interactive or an.Window.Destroyed then return end
 if not IsTouchInsideViewport(av[1])or not IsTouchInsideViewport(av[2])then
 return
 end
@@ -36171,11 +36039,14 @@ end
 end
 
 function ao.SetCamera(av,aw)
+if ao.Camera~=aw and OwnCamera then ao.Camera:Destroy()end
+OwnCamera=ao.Camera==aw and OwnCamera or false
 ao.Camera=aw
 at.CanvasGroup.Viewport.CurrentCamera=aw
 end
 
 function ao.SetInteractive(av,aw)
+if not aw then StopViewportInput()end
 ao.Interactive=aw
 at.CanvasGroup.Viewport.Active=aw
 end
@@ -36287,18 +36158,17 @@ end
 function av.Destroy(ax)
 aw:Destroy()
 
-table.remove(ak.AllElements,at.GlobalIndex)
-table.remove(aa.Elements,at.Index)
-table.remove(ap.Elements,at.Index)
+local Index=table.find(ak.AllElements,av)
+if Index then table.remove(ak.AllElements,Index)end
+Index=table.find(aa.Elements,av)
+if Index then table.remove(aa.Elements,Index)end
 aa:UpdateAllElementShapes(aa)
 end
 end
 
-ak.AllElements[at.Index]=av
+ak.AllElements[at.GlobalIndex]=av
 aa.Elements[at.Index]=av
-if ap then
-ap.Elements[at.Index]=av
-end
+
 
 if ak.NewElements then
 aa:UpdateAllElementShapes(aa)
