@@ -1,9 +1,9 @@
 --[[
-WindUI Fluent skin: customization build 8
+WindUI Fluent skin: customization build 9
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
-Content-only text size; fixed window/HUD/profile/keybind text, linked panel opacity and pinned panel toggle row, measured profile padding and automatic cached Tahoma download and local custom fonts.
+Content-only text size; fixed window/HUD/profile/keybind text, linked panel opacity and pinned panel toggle row, measured profile padding and automatic cached repository font download and local custom fonts.
 Includes hover/drag listener cleanup and event-driven slider movement.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
@@ -25187,10 +25187,24 @@ end
 
 function p.ResolveFont(r)
 if typeof(r)=="Font"then return r.Family end
-if type(r)=="string"and r:match"^%s*(.-)%s*$":lower()=="tahoma"then
+if type(r)=="string"then
+r=r:match"^%s*(.-)%s*$"
+if p.FontPresets[r]then return p.FontPresets[r]end
+if r:match"^%d+$"then return"rbxassetid://"..r end
+if r:match"^rbxassetid://%d+$"or r:match"^rbxasset://fonts/families/.+%.json$"then return r end
+local u,v=pcall(function()
+return Font.fromEnum(Enum.Font[r:gsub("^Enum%.Font%.","")])
+end)
+if u then return v.Family end
+local x=r:lower():gsub("%.ttf$","")
+if not x:match"^[a-z0-9][a-z0-9_-]*$"then return nil end
+local z="-"..x:gsub("_","-").."-"
 r={
-File="tahoma.ttf",Name="Tahoma",ExpectedSize=310752,
-Url="https://raw.githubusercontent.com/sametexe001/luas/refs/heads/main/fonts/tahoma.ttf",
+File=x..".ttf",Name=x=="tahoma"and"Tahoma"or x:gsub("[-_]"," "),
+ExpectedSize=x=="tahoma"and 310752 or nil,
+Weight=z:find("-bold-",1,true)and 700 or 400,
+Style=z:find("-italic-",1,true)and"italic"or"normal",
+Url="https://raw.githubusercontent.com/sametexe001/luas/refs/heads/main/fonts/"..x..".ttf",
 }
 end
 if type(r)=="table"and r.File~=nil then
@@ -25206,15 +25220,6 @@ end
 if type(r)=="number"and r>0 and r<math.huge then
 return"rbxassetid://"..math.floor(r)
 end
-if type(r)~="string"then return nil end
-r=r:match"^%s*(.-)%s*$"
-if p.FontPresets[r]then return p.FontPresets[r]end
-if r:match"^%d+$"then return"rbxassetid://"..r end
-if r:match"^rbxassetid://%d+$"or r:match"^rbxasset://fonts/families/.+%.json$"then return r end
-local u,v=pcall(function()
-return Font.fromEnum(Enum.Font[r:gsub("^Enum%.Font%.","")])
-end)
-if u then return v.Family end
 return nil
 end
 
@@ -29723,7 +29728,7 @@ ak+=1
 am.Row.Size=UDim2.new(1,-20,0,ai)
 am.Row.Position=UDim2.fromOffset(10,aj+4+(ak-1)*ai)
 am.RowTitle.Text=tostring(am.Owner.Title or"Action")
-am.RowKey.Text="["..(ae[am.Value]or am.Value).."]"
+am.RowKey.Text="[ "..(ae[am.Value]or am.Value).." ]"
 aa.SetThemeTag(am.RowTitle,{TextColor3=am.Owner.Value==true and"Accent"or"Placeholder"})
 end
 end
