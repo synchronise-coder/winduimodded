@@ -1,5 +1,5 @@
 --[[
-WindUI Fluent skin: customization build 12
+WindUI Fluent skin: customization build 13
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
@@ -7,6 +7,7 @@ Content-only text size; fixed window/HUD/profile/keybind text, linked panel opac
 Large text stays inside the scrolling body; bounded header labels, font-measured stats and top-aligned side keybind panel.
 Tag background transparency is configurable in code and through Tag:SetTransparency; text and icons stay visible.
 Shared standalone/inline keybind routing, drag-only movement listeners, viewport/modal cleanup and anonymous profile/stats.
+Named config files, Advanced config-tab builder, inline keybind persistence and interface restoration.
 Includes hover/drag listener cleanup and event-driven slider movement.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
@@ -28825,387 +28826,348 @@ function Tag:New(TagConfig, Parent)
 end
 
 return Tag end function a.A():typeof(__modImpl())local aa=a.cache.A if not aa then aa={c=__modImpl()}a.cache.A=aa end return aa.c end end do local function __modImpl()
+local clone = cloneref or clonereference or function(value) return value end
+local HttpService = clone(game:GetService("HttpService"))
 
-local aa=(cloneref or clonereference or function(aa)return aa end)
+local ConfigManager = {}
+ConfigManager.__index = ConfigManager
 
+local function finite(value)
+    return type(value) == "number" and value == value and math.abs(value) < math.huge
+end
 
-local ab=aa(game:GetService"RunService")
-local ac=aa(game:GetService"HttpService")
+local function configName(name)
+    if type(name) ~= "string" then return false, "Enter a config name" end
+    name = name:match("^%s*(.-)%s*$")
+    if #name == 0 or #name > 64 or name:find("[^%w_%- ]") then
+        return false, "Use 1–64 letters, numbers, spaces, - or _ for the config name"
+    end
+    return name
+end
 
-local ad
+local function ensureFolder(path)
+    if type(isfolder) ~= "function" or type(makefolder) ~= "function" then
+        return false, "Config files need isfolder and makefolder support"
+    end
+    local ok, err = pcall(function()
+        local current = path:sub(1, 1) == "/" and "/" or ""
+        for part in path:gmatch("[^/\\]+") do
+            current ..= part .. "/"
+            if not isfolder(current) then makefolder(current) end
+        end
+    end)
+    return ok, ok and nil or tostring(err)
+end
 
-local ae
-ae={
-Folder=nil,
-Path=nil,
-Configs={},
-Parser={
-Colorpicker={
-Save=function(af)
-return{
-__type=af.__type,
-value=af.Default:ToHex(),
-transparency=af.Transparency or nil,
-}
-end,
-Load=function(af,ag)
-if af and af.Update then
-af:Update(Color3.fromHex(ag.value),ag.transparency or nil)
+local function saveValue(element)
+    local data = { __type = element.__type, value = element.Value }
+    if element.Keybind then data.keybind = element.Keybind.Value end
+    return data
 end
+
+local function loadKeybind(element, data)
+    if data.keybind ~= nil and element.SetKeybind then element:SetKeybind(data.keybind) end
 end
-},
-Dropdown={
-Save=function(af)
-return{
-__type=af.__type,
-value=af.Value,
-}
-end,
-Load=function(af,ag)
-if af and af.Select then
-af:Select(ag.value)
+
+local function loadValue(element, data)
+    loadKeybind(element, data)
+    element:Set(data.value)
 end
-end
-},
-Input={
-Save=function(af)
-return{
-__type=af.__type,
-value=af.Value,
-}
-end,
-Load=function(af,ag)
-if af and af.Set then
-af:Set(ag.value)
-end
-end
-},
-Keybind={
-Save=function(af)
-return{
-__type=af.__type,
-value=af.Value,
-}
-end,
-Load=function(af,ag)
-if af and af.Set then
-af:Set(ag.value)
-end
-end
-},
-Slider={
-Save=function(af)
-return{
-__type=af.__type,
-value=af.Value.Default,
-}
-end,
-Load=function(af,ag)
-if af and af.Set then
-af:Set(tonumber(ag.value))
-end
-end
-},
-Toggle={
-Save=function(af)
-return{
-__type=af.__type,
-value=af.Value,
-}
-end,
-Load=function(af,ag)
-if af and af.Set then
-af:Set(ag.value)
-end
-end
-},
-}
+
+ConfigManager.Parser = {
+    Toggle = { Save = saveValue, Load = loadValue },
+    Input = { Save = saveValue, Load = loadValue },
+    Keybind = { Save = saveValue, Load = loadValue },
+    Dropdown = {
+        Save = saveValue,
+        Load = function(element, data) element:Select(data.value) end,
+    },
+    Slider = {
+        Save = function(element) return { __type = "Slider", value = element.Value.Default } end,
+        Load = function(element, data) element:Set(tonumber(data.value)) end,
+    },
+    Colorpicker = {
+        Save = function(element)
+            return { __type = "Colorpicker", value = element.Default:ToHex(), transparency = element.Transparency }
+        end,
+        Load = function(element, data)
+            local color = Color3.fromHex(data.value)
+            element:Update(color, data.transparency)
+            if element.Callback then element.Callback(color, data.transparency) end
+        end,
+    },
+    Button = {
+        Save = function(element)
+            return { __type = "Button", keybind = element.Keybind and element.Keybind.Value }
+        end,
+        Load = loadKeybind,
+    },
 }
 
-function ae.Init(af,ag)
-if not ag.Folder then
-warn"[ WindUI.ConfigManager ] Window.Folder is not specified."
-return false
-end
-if ab:IsStudio()or not writefile then
-warn"[ WindUI.ConfigManager ] The config system doesn't work in the studio."
-return false
-end
-
-ad=ag
-ae.Folder=ad.Folder
-ae.Path="WindUI/"..tostring(ae.Folder).."/config/"
-
-if not isfolder(ae.Path)then
-makefolder(ae.Path)
-end
-
-local ah=ae:AllConfigs()
-
-for ai,aj in next,ah do
-if isfile and readfile and isfile(aj..".json")then
-ae.Configs[aj]=readfile(aj..".json")
-end
+local function validate(data)
+    if type(data) ~= "table" or type(data.__type) ~= "string" then return false end
+    if data.keybind ~= nil and type(data.keybind) ~= "string" then return false end
+    if data.__type == "Toggle" then return type(data.value) == "boolean" end
+    if data.__type == "Input" then return type(data.value) == "string" end
+    if data.__type == "Keybind" then return type(data.value) == "string" end
+    if data.__type == "Slider" then return finite(tonumber(data.value)) end
+    if data.__type == "Dropdown" then
+        return data.value == nil or type(data.value) == "string" or type(data.value) == "table"
+    end
+    if data.__type == "Colorpicker" then
+        return type(data.value) == "string" and data.value:match("^#?%x%x%x%x%x%x$") ~= nil
+            and (data.transparency == nil or (finite(data.transparency) and data.transparency >= 0 and data.transparency <= 1))
+    end
+    return data.__type == "Button"
 end
 
-return ae
+function ConfigManager:Init(window)
+    if not window.Folder then return false, "Set Window.Folder to use config files" end
+    if type(writefile) ~= "function" or type(readfile) ~= "function" then
+        return false, "Config files need readfile and writefile support"
+    end
+    local manager = setmetatable({ Window = window, Folder = window.Folder, Configs = {} }, ConfigManager)
+    local ok, err = manager:SetPath("WindUI/" .. tostring(window.Folder) .. "/config/")
+    if not ok then return false, err end
+    return manager
 end
 
-function ae.SetPath(af,ag)
-if not ag then
-warn"[ WindUI.ConfigManager ] Custom path is not specified."
-return false
+function ConfigManager:SetPath(path)
+    if type(path) ~= "string" or path == "" then return false, "Enter a config folder" end
+    path = path:gsub("\\", "/"):gsub("/+$", "") .. "/"
+    local ok, err = ensureFolder(path)
+    if not ok then return false, err end
+    self.Path = path
+    for name, config in pairs(self.Configs) do config.Path = path .. name .. ".json" end
+    return true
 end
 
-ae.Path=ag
-if not ag:match"/$"then
-ae.Path=ag.."/"
+function ConfigManager:CreateConfig(name, autoload)
+    local err
+    name, err = configName(name)
+    if not name then return false, err end
+    if self.Configs[name] then
+        local config = self.Configs[name]
+        if autoload ~= nil then config:SetAutoLoad(autoload) end
+        config:SetAsCurrent()
+        return config
+    end
+    local manager, window = self, self.Window
+    local config = { Name = name, Path = self.Path .. name .. ".json", Elements = {}, CustomData = {}, AutoLoad = autoload == true, Version = 1.3 }
+    function config:SetAsCurrent() window:SetCurrentConfig(self); return self end
+    function config:Register(flag, element) self.Elements[flag] = element; return self end
+    function config:Set(key, value) self.CustomData[key] = value; return self end
+    function config:Get(key) return self.CustomData[key] end
+    function config:SetAutoLoad(value) self.AutoLoad = value == true; return self end
+    function config:GetData() return { elements = self.Elements, custom = self.CustomData, autoload = self.AutoLoad } end
+    local function registerFlags()
+        for flag, element in pairs(window.PendingFlags or {}) do config:Register(flag, element) end
+    end
+    function config:Save()
+        if type(writefile) ~= "function" then return false, "writefile is unavailable" end
+        local ok, data = pcall(function()
+            registerFlags()
+            local saved = { __version = self.Version, __elements = {}, __custom = self.CustomData, __autoload = self.AutoLoad }
+            for flag, element in pairs(self.Elements) do
+                local parser = manager.Parser[element.__type]
+                if parser then saved.__elements[flag] = parser.Save(element) end
+            end
+            local router = window._KeybindRouter
+            local key = router and router.VisibilityBind and router.VisibilityBind.Value
+                or (type(window.KeybindList) == "table" and window.KeybindList.ToggleKey)
+            saved.__window = { keybindListKey = key, keybindListVisible = window._KeybindListVisible, transparent = window.Transparent }
+            if window.GetUIScale then saved.__window.scale = window:GetUIScale() end
+            local written, message = writefile(self.Path, HttpService:JSONEncode(saved))
+            if written == false then error(message or "writefile failed") end
+            return saved
+        end)
+        if not ok then return false, "Could not save config: " .. tostring(data) end
+        return data
+    end
+    function config:Load()
+        if type(readfile) ~= "function" then return false, "readfile is unavailable" end
+        if type(isfile) == "function" then
+            local ok, exists = pcall(isfile, self.Path)
+            if not ok then return false, "Could not check config file" end
+            if not exists then return false, "Config file does not exist" end
+        end
+        local ok, data = pcall(function() return HttpService:JSONDecode(readfile(self.Path)) end)
+        if not ok then return false, "Could not read or parse config file" end
+        if type(data) ~= "table" then return false, "Config must contain a JSON object" end
+        if data.__version == nil then data = { __elements = data, __custom = {} } end
+        if type(data.__elements) ~= "table" or (data.__custom ~= nil and type(data.__custom) ~= "table") then
+            return false, "Invalid config format"
+        end
+        local appearance = data.__window or {}
+        if type(appearance) ~= "table"
+            or (appearance.keybindListKey ~= nil and type(appearance.keybindListKey) ~= "string")
+            or (appearance.keybindListVisible ~= nil and type(appearance.keybindListVisible) ~= "boolean")
+            or (appearance.transparent ~= nil and type(appearance.transparent) ~= "boolean")
+            or (appearance.scale ~= nil and (not finite(appearance.scale) or appearance.scale <= 0)) then
+            return false, "Invalid window settings"
+        end
+        registerFlags()
+        local flags = {}
+        for flag, value in pairs(data.__elements) do
+            local element = self.Elements[flag]
+            if type(value) ~= "table" then return false, "Invalid control data: " .. tostring(flag) end
+            if manager.Parser[value.__type] and not validate(value) then return false, "Invalid control value: " .. tostring(flag) end
+            if element and manager.Parser[element.__type] then
+                if element.__type ~= value.__type or not validate(value) then return false, "Invalid control value: " .. tostring(flag) end
+                table.insert(flags, flag)
+            end
+        end
+        table.sort(flags, function(left, right)
+            local a, b = self.Elements[left].ConfigLoadOrder or 0, self.Elements[right].ConfigLoadOrder or 0
+            return a < b or (a == b and tostring(left) < tostring(right))
+        end)
+        self:SetAsCurrent()
+        self.CustomData = data.__custom or {}
+        window.PendingConfigData = table.clone(data.__elements)
+        for _, flag in ipairs(flags) do
+            local element = self.Elements[flag]
+            local success, message = pcall(manager.Parser[element.__type].Load, element, data.__elements[flag])
+            if not success then return false, "Could not restore " .. tostring(flag) .. ": " .. tostring(message) end
+            window.PendingConfigData[flag] = nil
+        end
+        local success, message = pcall(function()
+            if appearance.keybindListKey and window.SetKeybindListKey then window:SetKeybindListKey(appearance.keybindListKey) end
+            if appearance.keybindListVisible ~= nil and window.SetKeybindListVisible then window:SetKeybindListVisible(appearance.keybindListVisible) end
+            if appearance.transparent ~= nil and window.ToggleTransparency then window:ToggleTransparency(appearance.transparent) end
+            if appearance.scale and window.SetUIScale then window:SetUIScale(appearance.scale) end
+        end)
+        if not success then return false, "Could not restore window: " .. tostring(message) end
+        return self.CustomData
+    end
+    function config:Delete() return manager:DeleteConfig(self.Name) end
+    self.Configs[name] = config
+    config:SetAsCurrent()
+    if autoload == nil and type(readfile) == "function" then
+        local ok, saved = pcall(function() return HttpService:JSONDecode(readfile(config.Path)) end)
+        if ok and type(saved) == "table" then config.AutoLoad = saved.__autoload == true end
+    end
+    local exists = false
+    if type(isfile) == "function" then
+        local ok, value = pcall(isfile, config.Path)
+        exists = ok and value == true
+    end
+    if config.AutoLoad and exists then
+        task.defer(function()
+            local result, message = config:Load()
+            if result == false then warn("[ WindUI.ConfigManager ] " .. tostring(message)) end
+        end)
+    end
+    return config
 end
 
-if not isfolder(ae.Path)then
-makefolder(ae.Path)
+function ConfigManager:Config(name, autoload) return self:CreateConfig(name, autoload) end
+function ConfigManager:GetConfig(name) return self.Configs[name] end
+
+function ConfigManager:GetAutoLoadConfigs()
+    local names = {}
+    for name, config in pairs(self.Configs) do if config.AutoLoad then table.insert(names, name) end end
+    table.sort(names)
+    return names
 end
 
-return true
+function ConfigManager:DeleteConfig(name)
+    local err
+    name, err = configName(name)
+    if not name then return false, err end
+    if type(delfile) ~= "function" then return false, "delfile is unavailable" end
+    local path = self.Path .. name .. ".json"
+    local ok, result = pcall(function()
+        if type(isfile) == "function" and not isfile(path) then return false end
+        local deleted, message = delfile(path)
+        if deleted == false then error(message or "delfile failed") end
+        return true
+    end)
+    if not ok then return false, "Could not delete config: " .. tostring(result) end
+    if not result then return false, "Config file does not exist" end
+    self.Configs[name] = nil
+    if self.Window.CurrentConfig and self.Window.CurrentConfig.Path == path then self.Window.CurrentConfig = nil end
+    return true
 end
 
-function ae.CreateConfig(af,ag,ah)
-local ai={
-Path=ae.Path..ag..".json",
-Elements={},
-CustomData={},
-AutoLoad=ah or false,
-Version=1.2,
-}
-
-if not ag then
-return false,"No config file is selected"
+function ConfigManager:AllConfigs()
+    if type(listfiles) ~= "function" then return {}, "listfiles is unavailable; enter the name manually" end
+    local ok, files = pcall(listfiles, self.Path)
+    if not ok or type(files) ~= "table" then return {}, "Could not list saved configs" end
+    local names, seen = {}, {}
+    for _, path in ipairs(files) do
+        local name = type(path) == "string" and path:match("([^\\/]+)%.json$")
+        if name and configName(name) and not seen[name] then
+            seen[name] = true
+            table.insert(names, name)
+        end
+    end
+    table.sort(names)
+    return names
 end
 
-function ai.SetAsCurrent(aj)
-ad:SetCurrentConfig(ai)
+function ConfigManager:Unregister(flag, element)
+    if self.Window.PendingFlags[flag] == element then self.Window.PendingFlags[flag] = nil end
+    for _, config in pairs(self.Configs) do
+        if config.Elements[flag] == element then config.Elements[flag] = nil end
+    end
 end
 
-function ai.Register(aj,ak,al)
-ai.Elements[ak]=al
+function ConfigManager:BuildTab(tab, options)
+    options = options or {}
+    local name = options.Name or "default"
+    local status = tab:Paragraph({ Title = "Configs", Desc = "Save your settings, or choose a saved config to load." })
+    local input = tab:Input({ Title = "Config name", Value = name, Callback = function(value) name = tostring(value) end })
+    local dropdown = tab:Dropdown({
+        Title = "Saved configs", Values = {}, AllowNone = true, SearchBarEnabled = true,
+        Callback = function(value) if type(value) == "string" and value ~= "" then name = value; input:Set(value) end end,
+    })
+    local function refresh()
+        local names, err = self:AllConfigs()
+        dropdown:Refresh(names)
+        dropdown:Select(table.find(names, name) and name or nil)
+        if err then status:SetDesc(err) end
+        return names
+    end
+    local function run(action)
+        local ok, result, err = pcall(function()
+            local config, message = self:CreateConfig(name, false)
+            if not config then return false, message end
+            name = config.Name
+            if action == "Save" and options.BeforeSave then options.BeforeSave(config) end
+            local data, failure = config[action](config)
+            if data ~= false and action == "Load" and options.AfterLoad then options.AfterLoad(data, config) end
+            return data, failure
+        end)
+        refresh()
+        status:SetDesc(ok and result ~= false and (action == "Save" and "Saved " or "Loaded ") .. name .. "." or tostring(err or result))
+    end
+    tab:Button({ Title = "Save config", Icon = "lucide:save", Callback = function() run("Save") end })
+    tab:Button({ Title = "Load config", Icon = "lucide:folder-open", Callback = function() run("Load") end })
+    tab:Button({ Title = "Refresh configs", Icon = "lucide:refresh-cw", Callback = refresh })
+    tab:Button({
+        Title = "Delete config", Icon = "lucide:trash-2", Locked = type(delfile) ~= "function", LockedTitle = "delfile is unavailable",
+        Callback = function()
+            local deleting, err = configName(name)
+            if not deleting then status:SetDesc(err); return end
+            self.Window:Dialog({
+                Title = "Delete config", Content = 'Delete "' .. deleting .. '"?',
+                Buttons = {
+                    { Title = "Cancel", Variant = "Secondary", Callback = function() end },
+                    { Title = "Delete", Variant = "Primary", Callback = function()
+                        local ok, message = self:DeleteConfig(deleting)
+                        refresh()
+                        status:SetDesc(ok and "Deleted " .. deleting .. "." or message)
+                    end },
+                },
+            }):Open()
+        end,
+    })
+    refresh()
+    return { Refresh = refresh, Status = status, Name = input, List = dropdown }
 end
 
-function ai.Set(aj,ak,al)
-ai.CustomData[ak]=al
-end
-
-function ai.Get(aj,ak)
-return ai.CustomData[ak]
-end
-
-function ai.SetAutoLoad(aj,ak)
-ai.AutoLoad=ak
-end
-
-function ai.Save(aj)
-if ad.PendingFlags then
-for ak,al in next,ad.PendingFlags do
-ai:Register(ak,al)
-end
-end
-
-local ak={
-__version=ai.Version,
-__elements={},
-__autoload=ai.AutoLoad,
-__custom=ai.CustomData
-}
-
-for al,am in next,ai.Elements do
-if ae.Parser[am.__type]then
-ak.__elements[tostring(al)]=ae.Parser[am.__type].Save(am)
-end
-end
-
-local al=ac:JSONEncode(ak)
-if writefile then
-writefile(ai.Path,al)
-end
-
-return ak
-end
-
-function ai.Load(aj)
-if isfile and not isfile(ai.Path)then
-return false,"Config file does not exist"
-end
-
-local ak,al=pcall(function()
-local ak=readfile or function()
-warn"[ WindUI.ConfigManager ] The config system doesn't work in the studio."
-return nil
-end
-return ac:JSONDecode(ak(ai.Path))
-end)
-
-if not ak then
-return false,"Failed to parse config file"
-end
-
-if not al.__version then
-local am={
-__version=ai.Version,
-__elements=al,
-__custom={}
-}
-al=am
-end
-
-if ad.PendingFlags then
-for am,an in next,ad.PendingFlags do
-ai:Register(am,an)
-end
-end
-
-for am,an in next,(al.__elements or{})do
-if ai.Elements[am]and ae.Parser[an.__type]then
-task.spawn(function()
-ae.Parser[an.__type].Load(ai.Elements[am],an)
-end)
-end
-end
-
-ai.CustomData=al.__custom or{}
-
-return ai.CustomData
-end
-
-function ai.Delete(aj)
-if not delfile then
-return false,"delfile function is not available"
-end
-
-if not isfile(ai.Path)then
-return false,"Config file does not exist"
-end
-
-local ak,al=pcall(function()
-delfile(ai.Path)
-end)
-
-if not ak then
-return false,"Failed to delete config file: "..tostring(al)
-end
-
-ae.Configs[ag]=nil
-
-if ad.CurrentConfig==ai then
-ad.CurrentConfig=nil
-end
-
-return true,"Config deleted successfully"
-end
-
-function ai.GetData(aj)
-return{
-elements=ai.Elements,
-custom=ai.CustomData,
-autoload=ai.AutoLoad
-}
-end
-
-
-if isfile(ai.Path)then
-local aj,ak=pcall(function()
-return ac:JSONDecode(readfile(ai.Path))
-end)
-
-if aj and ak and ak.__autoload then
-ai.AutoLoad=true
-
-task.spawn(function()
-task.wait(0.5)
-local al,am=pcall(function()
-return ai:Load()
-end)
-if al then
-if ad.Debug then print("[ WindUI.ConfigManager ] AutoLoaded config: "..ag)end
-else
-warn("[ WindUI.ConfigManager ] Failed to AutoLoad config: "..ag.." - "..tostring(am))
-end
-end)
-end
-end
-
-
-ai:SetAsCurrent()
-ae.Configs[ag]=ai
-return ai
-end
-
-function ae.Config(af,ag,ah)
-return ae:CreateConfig(ag,ah)
-end
-
-function ae.GetAutoLoadConfigs(af)
-local ag={}
-
-for ah,ai in pairs(ae.Configs)do
-if ai.AutoLoad then
-table.insert(ag,ah)
-end
-end
-
-return ag
-end
-
-function ae.DeleteConfig(af,ag)
-if not delfile then
-return false,"delfile function is not available"
-end
-
-local ah=ae.Path..ag..".json"
-
-if not isfile(ah)then
-return false,"Config file does not exist"
-end
-
-local ai,aj=pcall(function()
-delfile(ah)
-end)
-
-if not ai then
-return false,"Failed to delete config file: "..tostring(aj)
-end
-
-ae.Configs[ag]=nil
-
-if ad.CurrentConfig and ad.CurrentConfig.Path==ah then
-ad.CurrentConfig=nil
-end
-
-return true,"Config deleted successfully"
-end
-
-function ae.AllConfigs(af)
-if not listfiles then return{}end
-
-local ag={}
-if not isfolder(ae.Path)then
-makefolder(ae.Path)
-return ag
-end
-
-for ah,ai in next,listfiles(ae.Path)do
-local aj=ai:match"([^\\/]+)%.json$"
-if aj then
-table.insert(ag,aj)
-end
-end
-
-return ag
-end
-
-function ae.GetConfig(af,ag)
-return ae.Configs[ag]
-end
-
-return ae end function a.B():typeof(__modImpl())local aa=a.cache.B if not aa then aa={c=__modImpl()}a.cache.B=aa end return aa.c end end do local function __modImpl()
+return ConfigManager
+end function a.B():typeof(__modImpl())local aa=a.cache.B if not aa then aa={c=__modImpl()}a.cache.B=aa end return aa.c end end do local function __modImpl()
 local aa=a.j()
 
 local ab={}
@@ -36057,7 +36019,6 @@ return ao.__type,ao
 end
 
 return al end function a.ae():typeof(__modImpl())local aa=a.cache.ae if not aa then aa={c=__modImpl()}a.cache.ae=aa end return aa.c end end do local function __modImpl()
-
 return{
 Elements={
 Paragraph=a.J(),
@@ -36098,6 +36059,10 @@ at.ElementsModule=an local
 au, av=ar:New(at)
 
 if at.Flag and typeof(at.Flag)=="string"then
+av.Flag=at.Flag
+av.ConfigLoadOrder=at.ConfigLoadOrder or 0
+ak.PendingFlags=ak.PendingFlags or{}
+ak.PendingFlags[at.Flag]=av
 if ak.CurrentConfig then
 ak.CurrentConfig:Register(at.Flag,av)
 
@@ -36105,7 +36070,7 @@ if ak.PendingConfigData and ak.PendingConfigData[at.Flag]then
 local aw=ak.PendingConfigData[at.Flag]
 
 local ax=ak.ConfigManager
-if ax.Parser[aw.__type]then
+if aw.__type==av.__type and ax.Parser[aw.__type]then
 task.defer(function()
 local ay,az=pcall(function()
 ax.Parser[aw.__type].Load(av,aw)
@@ -36124,9 +36089,6 @@ end
 end)
 end
 end
-else
-ak.PendingFlags=ak.PendingFlags or{}
-ak.PendingFlags[at.Flag]=av
 end
 end
 
@@ -36156,6 +36118,7 @@ function av.Highlight(ax)
 aw:Highlight()
 end
 function av.Destroy(ax)
+if av.Flag and ak.ConfigManager then ak.ConfigManager:Unregister(av.Flag,av)end
 aw:Destroy()
 
 local Index=table.find(ak.AllElements,av)
@@ -36205,7 +36168,8 @@ end
 end
 end
 end,
-}end function a.af():typeof(__modImpl())local aa=a.cache.af if not aa then aa={c=__modImpl()}a.cache.af=aa end return aa.c end end do local function __modImpl()
+}
+end function a.af():typeof(__modImpl())local aa=a.cache.af if not aa then aa={c=__modImpl()}a.cache.af=aa end return aa.c end end do local function __modImpl()
 
 local aa=(cloneref or clonereference or function(aa)
 return aa
@@ -37589,9 +37553,6 @@ return aq
 end
 
 return ae end function a.aj():typeof(__modImpl())local aa=a.cache.aj if not aa then aa={c=__modImpl()}a.cache.aj=aa end return aa.c end end do local function __modImpl()
-
-
-
 local aa=(cloneref or clonereference or function(aa)
 return aa
 end)
@@ -37729,19 +37690,13 @@ if au.Topbar=={}then
 au.Topbar={Height=52,ButtonsType="Default"}
 end
 
-if not ai:IsStudio()and au.Folder and writefile then
-if not isfolder("WindUI/"..au.Folder)then
-makefolder("WindUI/"..au.Folder)
+if not ai:IsStudio()and au.Folder and type(writefile)=="function"
+and type(isfolder)=="function"and type(makefolder)=="function"then
+pcall(function()
+for _,path in ipairs({"WindUI","WindUI/"..au.Folder,"WindUI/"..au.Folder.."/assets",au.Folder,au.Folder.."/assets"})do
+if not isfolder(path)then makefolder(path)end
 end
-if not isfolder("WindUI/"..au.Folder.."/assets")then
-makefolder("WindUI/"..au.Folder.."/assets")
-end
-if not isfolder(au.Folder)then
-makefolder(au.Folder)
-end
-if not isfolder(au.Folder.."/assets")then
-makefolder(au.Folder.."/assets")
-end
+end)
 end
 
 local aw=am("UICorner",{
@@ -37749,7 +37704,7 @@ CornerRadius=UDim.new(0,au.UICorner),
 })
 
 if au.Folder then
-au.ConfigManager=as:Init(au)
+au.ConfigManager,au.ConfigError=as:Init(au)
 end
 
 local ax=am("Frame",{
@@ -39070,6 +39025,12 @@ function au.SetCurrentConfig(C,F)
 au.CurrentConfig=F
 end
 
+function au.BuildConfigTab(C,F,G)
+if C.ConfigManager then return C.ConfigManager:BuildTab(F,G)end
+F:Paragraph({Title="Configs unavailable",Desc=C.ConfigError or"Config files need readfile, writefile, isfolder and makefolder support."})
+return false
+end
+
 do
 local C=40
 local F=ak.ViewportSize
@@ -39679,7 +39640,8 @@ end
 
 
 return au
-end end function a.ak():typeof(__modImpl())local aa=a.cache.ak if not aa then aa={c=__modImpl()}a.cache.ak=aa end return aa.c end end end
+end
+end function a.ak():typeof(__modImpl())local aa=a.cache.ak if not aa then aa={c=__modImpl()}a.cache.ak=aa end return aa.c end end end
 
 local aa={
 Window=nil,
