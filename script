@@ -1,15 +1,6 @@
 --[[
-WindUI Fluent skin: customization build 14
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
-Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
-Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
-Content-only text size; fixed window/HUD/profile/keybind text, linked panel opacity and pinned panel toggle row, measured profile padding and automatic cached repository font download and local custom fonts.
-Large text stays inside the scrolling body; bounded header labels, font-measured stats and top-aligned side keybind panel.
-Tag background transparency is configurable in code and through Tag:SetTransparency; text and icons stay visible.
-Shared standalone/inline keybind routing, drag-only movement listeners, viewport/modal cleanup and anonymous profile/stats.
-Named config files, Advanced config-tab builder, inline keybind persistence and interface restoration.
-Includes hover/drag listener cleanup and event-driven slider movement.
-Full bundled source; no upstream WindUI loader or runtime source patcher.
+made by @synchronisee
 
 MIT License
 
