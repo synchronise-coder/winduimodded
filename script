@@ -29547,9 +29547,13 @@ if af._KeybindSetup then return end
 af._KeybindSetup=true
 local ag=type(af.KeybindList)=="table"and af.KeybindList or{}
 af._KeybindListVisible=af.KeybindList~=false and af.KeybindList~=nil and ag.Enabled~=false
+af._KeybindListControls=setmetatable({},{__mode="k"})
 function af.SetKeybindListVisible(ah,ai)
 local aj=ah._KeybindListVisible
 ah._KeybindListVisible=ai~=false
+for al in pairs(ah._KeybindListControls)do
+al:_SyncKeybindListValue(ah._KeybindListVisible)
+end
 local ak=ah._KeybindRouter
 if not ak and ah._KeybindListVisible then ak=ac.Router(ah)end
 if ak then
@@ -29571,6 +29575,15 @@ aj.VisibilityBind:Set(ai)
 return ah
 end
 if ac.Normalize(ag.ToggleKey)~="None"then ac.Router(af)end
+end
+
+function ac.BindListToggle(af,ag)
+ac.Setup(af)
+af._KeybindListControls[ag]=true
+ag:_SyncKeybindListValue(af._KeybindListVisible)
+ag.ToggleFrame.UIElements.Main.Destroying:Connect(function()
+af._KeybindListControls[ag]=nil
+end)
 end
 
 function ac.Router(af)
@@ -31560,6 +31573,12 @@ local ae=a.M().New
 local af={}
 
 function af.New(ag,ah)
+local panelToggle=ah.Keybind=="UI"or ah.SyncKeybindList==true
+if panelToggle then
+assert(ah.Type~="Checkbox",'Keybind = "UI" requires a switch toggle')
+a.E().Setup(ah.Window)
+ah.Value=ah.Window._KeybindListVisible
+end
 local ai={
 __type="Toggle",
 Title=ah.Title or"Toggle",
@@ -31659,7 +31678,19 @@ al.LayoutOrder=1
 
 function ai.Set(ap,aq,ar,as)
 if aj then
+if panelToggle then aq=aq==true end
 am:Set(aq,ar,as or false)
+ak=aq
+ai.Value=aq
+if panelToggle then ah.Window:SetKeybindListVisible(aq)end
+if ah.Window._KeybindRouter then ah.Window._KeybindRouter:RefreshList()end
+end
+end
+
+if panelToggle then
+function ai._SyncKeybindListValue(ap,aq)
+if ai.Value==aq then return end
+am:Set(aq,false,ah.Window.NewElements)
 ak=aq
 ai.Value=aq
 if ah.Window._KeybindRouter then ah.Window._KeybindRouter:RefreshList()end
@@ -31708,7 +31739,7 @@ end
 end a.C()
 
 .BindControl(ai,ah.Window,ah)
-if ah.Keybind then
+if ah.Keybind and ah.Keybind~="UI"then
 local aq=ah.Keybind==true and{Key=ah.KeybindKey or ah.Key or"None"}or ah.Keybind
 local ar
 local as=type(aq)=="table"and aq.Mode=="Hold"
@@ -31735,6 +31766,8 @@ ai.UIElements.Keybind=ai.Keybind.Button
 ai.Keybind.Button.LayoutOrder=2
 function ai.SetKeybind(at,au)return at.Keybind:Set(au)end
 end
+
+if panelToggle then a.E().BindListToggle(ah.Window,ai)end
 
 return ai.__type,ai
 end
