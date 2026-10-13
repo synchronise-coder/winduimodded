@@ -1,5 +1,5 @@
 --[[
-WindUI Fluent skin: customization build 24
+WindUI Fluent skin: customization build 25
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
@@ -15,7 +15,9 @@ Centered hover-only sidebar divider, compact default width and manual resizing t
 SelectTab is available automatically after creating the window and accepts tab objects.
 Modifier keybinds, conflict warnings, current-tab filtering and panel position reset.
 Config autoload, unique names, renaming, duplication and favorites; per-setting reset and bounded undo.
-Wider sidebar with top-right role, optional partial name masking and softer exterior glow.
+Wider sidebar with top-right role and optional partial name masking.
+Generated config-name families preserve literal names; synchronized keybind filter and accent separator.
+Six-second grouped Undo controls and a smooth hollow border-glow texture with cached local loading.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
 MIT License
@@ -28834,6 +28836,7 @@ end
 
 return Tag end function a.A():typeof(__modImpl())local aa=a.cache.A if not aa then aa={c=__modImpl()}a.cache.A=aa end return aa.c end end do local function __modImpl()
 
+
 local clone = cloneref or clonereference or function(value) return value end
 local HttpService = clone(game:GetService("HttpService"))
 
@@ -28972,7 +28975,7 @@ function ConfigManager:CreateConfig(name, autoload)
         return config
     end
     local manager, window = self, self.Window
-    local config = { Name = name, Path = self.Path .. name .. ".json", Elements = {}, CustomData = {}, AutoLoad = autoload == true or self:GetAutoLoad() == name, Version = 1.4 }
+    local config = { Name = name, BaseName = self:GetConfigBase(name), Path = self.Path .. name .. ".json", Elements = {}, CustomData = {}, AutoLoad = autoload == true or self:GetAutoLoad() == name, Version = 1.4 }
     function config:SetAsCurrent() window:SetCurrentConfig(self); return self end
     function config:Register(flag, element) self.Elements[flag] = element; return self end
     function config:Set(key, value) self.CustomData[key] = value; return self end
@@ -28991,7 +28994,7 @@ function ConfigManager:CreateConfig(name, autoload)
         if type(writefile) ~= "function" then return false, "writefile is unavailable" end
         local ok, data = pcall(function()
             registerFlags()
-            local saved = { __version = self.Version, __elements = {}, __custom = self.CustomData, __autoload = self.AutoLoad }
+            local saved = { __version = self.Version, __nameBase = self.BaseName, __elements = {}, __custom = self.CustomData, __autoload = self.AutoLoad }
             for flag, element in pairs(self.Elements) do
                 local parser = manager.Parser[element.__type]
                 if parser then saved.__elements[flag] = parser.Save(element) end
@@ -29175,6 +29178,20 @@ function ConfigManager:Exists(name)
     return ok and type(contents) == "string"
 end
 
+function ConfigManager:GetConfigBase(name)
+    local valid = configName(name)
+    if not valid then return name end
+    local config = self.Configs[valid]
+    if config and config.BaseName then return config.BaseName end
+    local ok, data = pcall(function() return HttpService:JSONDecode(readfile(self.Path .. valid .. ".json")) end)
+    local base = ok and type(data) == "table" and type(data.__nameBase) == "string" and configName(data.__nameBase)
+    if not base then return valid end
+    if valid == base then return base end
+    local suffix = valid:match("_(%d+)$")
+    if suffix and tonumber(suffix) >= 2 and valid == base:sub(1, 63 - #suffix) .. "_" .. suffix then return base end
+    return valid
+end
+
 function ConfigManager:UniqueConfigName(name)
     local valid, message = configName(name)
     if not valid then return false, message end
@@ -29193,6 +29210,7 @@ function ConfigManager:SaveNewConfig(name)
     if not unique then return false, message end
     local config, failure = self:CreateConfig(unique, false)
     if not config then return false, failure end
+    config.BaseName = configName(name)
     local data, errorMessage = config:Save()
     if data == false then return false, errorMessage end
     return unique, data
@@ -29249,7 +29267,8 @@ function ConfigManager:DuplicateConfig(name, target)
     local valid, message = configName(name)
     if not valid then return false, message end
     if not self:Exists(valid) then return false, "Config file does not exist" end
-    local unique, failure = self:UniqueConfigName(target or valid)
+    local base = target and target ~= valid and target or self:GetConfigBase(valid)
+    local unique, failure = self:UniqueConfigName(base)
     if not unique then return false, failure end
     local ok, result = pcall(function()
         local contents = readfile(self.Path .. valid .. ".json")
@@ -29257,6 +29276,7 @@ function ConfigManager:DuplicateConfig(name, target)
         if type(data) ~= "table" then error("Invalid config format") end
         if data.__version == nil then data = { __version = 1.4, __elements = data, __custom = {} } end
         data.__autoload = false
+        data.__nameBase = base
         local written, err = writefile(self.Path .. unique .. ".json", HttpService:JSONEncode(data))
         if written == false then error(err or "writefile failed") end
     end)
@@ -29276,8 +29296,10 @@ function ConfigManager:RenameConfig(name, target)
     if not unique then return false, errorMessage end
     local oldPath, newPath = self.Path .. valid .. ".json", self.Path .. unique .. ".json"
     local ok, result = pcall(function()
-        local contents = readfile(oldPath)
-        local written, err = writefile(newPath, contents)
+        local data = HttpService:JSONDecode(readfile(oldPath))
+        if data.__version == nil then data = { __version = 1.4, __elements = data, __custom = {} } end
+        data.__nameBase = requested
+        local written, err = writefile(newPath, HttpService:JSONEncode(data))
         if written == false then error(err or "writefile failed") end
         local deleted, deletionError = delfile(oldPath)
         if deleted == false then
@@ -29288,7 +29310,7 @@ function ConfigManager:RenameConfig(name, target)
     if not ok then return false, "Could not rename config: " .. tostring(result) end
     local config = self.Configs[valid]
     self.Configs[valid] = nil
-    if config then config.Name, config.Path = unique, newPath; self.Configs[unique] = config end
+    if config then config.Name, config.Path, config.BaseName = unique, newPath, requested; self.Configs[unique] = config end
     if self:GetAutoLoad() == valid then self.Preferences.autoLoad = unique end
     local favorite = table.find(self.Preferences.favorites, valid)
     if favorite then self.Preferences.favorites[favorite] = unique end
@@ -29301,15 +29323,21 @@ function ConfigManager:BuildTab(tab, options)
     options = options or {}
     local manager, window = self, self.Window
     local name, selected = options.Name or "default", nil
+    local base, updatingName = name, false
     local refreshing = true
     local status = tab:Paragraph({ Title = "Config status", Desc = "Save a new config or choose one to load." })
-    local input = tab:Input({ Title = "Config name", Value = name, History = false, Placeholder = "My config", Callback = function(value) name = tostring(value) end })
+    local input = tab:Input({ Title = "Config name", Value = name, History = false, Placeholder = "My config", Callback = function(value) name = tostring(value); if not updatingName then base = name end end })
+    local function showName(value)
+        updatingName = true
+        input:Set(value)
+        updatingName = false
+    end
     local saved, favorites, autoload, pin
     local refresh
     local function choose(value)
         if refreshing or type(value) ~= "string" or value == "" then return end
-        selected, name = value, value
-        input:Set(value)
+        selected, name, base = value, value, manager:GetConfigBase(value)
+        showName(value)
         refresh()
     end
     saved = tab:Dropdown({ Title = "Saved configs", Values = {}, Placeholder = "...", AllowNone = true, SearchBarEnabled = true, History = false, Callback = choose })
@@ -29358,15 +29386,16 @@ function ConfigManager:BuildTab(tab, options)
     end
     local function done(result, message, verb)
         if result == false then status:SetDesc(tostring(message)); return end
-        if type(result) == "string" then selected, name = result, result; input:Set(result) end
+        if type(result) == "string" then selected, name = result, result; showName(result) end
         refresh()
         status:SetDesc(verb .. " " .. tostring(selected or name) .. "." .. (type(message) == "string" and " " .. message or ""))
     end
     tab:Button({ Title = "Save config", Icon = "lucide:save", Callback = function()
-        local unique, errorMessage = manager:UniqueConfigName(name)
+        local unique, errorMessage = manager:UniqueConfigName(base)
         if not unique then status:SetDesc(errorMessage); return end
         local config, failure = manager:CreateConfig(unique, false)
         if not config then status:SetDesc(failure); return end
+        config.BaseName = base
         if options.BeforeSave then options.BeforeSave(config) end
         local result, message = config:Save()
         done(result ~= false and unique or false, result == false and message or nil, "Saved")
@@ -29381,10 +29410,11 @@ function ConfigManager:BuildTab(tab, options)
     tab:Button({ Title = "Rename config", Icon = "lucide:pencil", Locked = type(delfile) ~= "function", LockedTitle = "File deletion unavailable", Callback = function()
         if not selected then status:SetDesc("Select a saved config, then enter its new name."); return end
         local result, message = manager:RenameConfig(selected, name)
+        if result ~= false then base = name end
         done(result, message, "Renamed to")
     end })
     tab:Button({ Title = "Duplicate config", Icon = "lucide:copy", Callback = function()
-        local result, message = manager:DuplicateConfig(selected or name, name)
+        local result, message = manager:DuplicateConfig(selected or name, base)
         done(result, message, "Duplicated as")
     end })
     tab:Button({ Title = "Refresh configs", Icon = "lucide:refresh-cw", Callback = refresh })
@@ -29416,7 +29446,7 @@ function ConfigManager:BuildTab(tab, options)
             local target = manager:GetAutoLoad()
             if not target then return end
             local result, message = manager:LoadAutoLoad()
-            if result ~= false then selected, name = target, target; input:Set(target); refresh() end
+            if result ~= false then selected, name, base = target, target, manager:GetConfigBase(target); showName(target); refresh() end
             status:SetDesc(result ~= false and "Auto-loaded " .. target .. "." or "Auto-load failed: " .. tostring(message))
         end)
     end
@@ -29425,11 +29455,35 @@ end
 
 return ConfigManager
 
+
 end function a.B():typeof(__modImpl())local aa=a.cache.B if not aa then aa={c=__modImpl()}a.cache.B=aa end return aa.c end end do local function __modImpl()
+
 
 local aa=a.j()
 
 local ab={}
+
+local GlowAsset
+local GlowAssetAttempted=false
+local GlowPng="\137\080\078\071\013\010\026\010\000\000\000\013\073\072\068\082\000\000\000\128\000\000\000\128\008\006\000\000\000\195\062\097\203\000\000\007\239\073\068\065\084\120\218\237\154\077\114\219\072\012\133\209\100\235\207\078\178\207\041\102\124\141\248\026\217\205\017\038\203\092\033\187\092\035\190\070\142\145\253\076\108\073\150\068\206\166\219\121\134\129\238\038\045\101\051\239\085\161\072\219\148\228\226\251\026\064\131\010\227\056\202\068\133\134\223\133\134\215\080\117\141\019\127\246\126\231\155\057\001\128\154\241\161\240\059\130\112\062\227\199\194\239\038\131\016\103\154\031\026\142\129\198\159\021\132\049\069\080\071\239\250\208\002\065\124\165\249\250\092\135\151\025\168\118\243\071\005\000\134\190\062\076\133\032\078\048\191\102\124\087\000\129\016\204\055\223\139\065\129\016\156\178\080\132\032\206\052\095\027\223\057\231\022\004\084\059\004\150\225\067\138\014\206\071\195\252\208\002\065\108\052\031\001\232\140\099\039\034\061\156\235\032\000\243\001\024\156\056\193\125\213\128\072\107\038\136\141\230\091\043\030\141\239\213\121\111\000\193\050\048\061\253\107\195\049\122\056\031\210\125\029\020\060\085\008\226\076\243\181\209\049\133\062\071\016\152\005\230\173\126\052\253\152\002\207\059\248\123\214\080\000\235\025\004\113\162\249\217\076\052\123\001\199\005\252\172\065\032\000\211\001\208\198\031\069\228\000\209\167\163\213\104\055\065\016\043\195\027\109\126\014\052\125\153\002\207\151\010\132\158\205\224\172\230\239\164\140\127\132\200\063\231\172\124\076\175\183\050\129\181\250\131\136\140\165\038\208\050\063\026\198\175\156\200\215\068\213\015\080\117\097\221\063\130\225\123\021\125\067\143\053\192\239\204\038\048\020\140\215\205\094\052\140\095\139\200\070\029\243\223\150\070\022\160\218\178\000\174\254\071\048\125\039\034\219\180\192\122\103\167\101\013\139\006\171\020\196\202\094\191\083\181\126\001\230\111\032\174\212\113\157\098\169\178\000\001\152\014\064\078\249\059\101\254\066\053\217\226\173\114\152\011\188\152\017\120\187\000\171\227\143\134\249\215\042\174\000\130\141\001\000\075\064\123\009\208\000\108\083\172\160\199\178\238\169\053\041\196\048\119\001\161\210\249\071\099\245\095\139\200\027\035\174\001\128\149\162\149\025\096\090\006\056\064\237\071\000\022\106\123\173\123\135\193\152\028\090\013\248\232\013\130\244\234\071\243\215\010\128\183\034\242\046\029\223\064\038\064\000\088\002\230\151\128\012\192\186\112\063\113\102\224\077\014\205\135\072\177\080\251\059\213\249\227\234\191\002\000\222\065\188\005\000\214\014\173\132\096\218\016\040\003\160\083\191\101\190\030\026\157\224\111\163\177\035\008\209\169\253\065\013\125\114\026\047\101\000\004\032\055\130\249\117\157\145\174\168\050\004\121\229\030\212\092\069\155\127\082\229\034\199\002\064\232\229\215\003\164\103\189\064\172\108\001\173\018\176\129\102\239\013\064\128\037\032\175\126\014\129\094\063\012\138\170\227\015\078\153\120\084\195\034\156\022\158\228\215\211\195\080\154\004\122\037\192\234\001\174\140\093\192\181\170\253\189\136\124\023\145\059\017\249\038\034\063\232\109\147\222\139\200\173\136\124\016\145\027\103\159\175\155\068\156\019\236\019\004\177\048\043\120\202\000\222\179\126\175\007\064\008\054\106\235\183\134\090\213\139\200\103\017\249\074\063\039\235\071\186\111\095\069\228\163\136\124\114\086\126\030\016\109\096\135\096\013\224\172\239\102\140\214\032\040\020\102\000\086\031\176\081\131\031\092\249\127\165\085\079\189\078\095\019\016\095\210\189\197\213\191\073\043\126\163\238\063\246\011\086\006\120\042\197\157\049\063\174\237\004\150\098\063\007\192\015\253\076\243\207\170\111\233\158\226\098\092\169\021\191\084\131\183\082\250\127\242\188\051\102\000\165\044\160\065\088\168\200\053\159\105\255\050\153\224\059\052\229\024\218\248\166\213\047\098\063\069\170\125\001\004\063\100\097\212\153\059\122\117\049\221\057\019\090\203\248\146\249\079\071\043\003\180\140\134\251\194\007\049\245\095\182\020\148\190\153\229\053\124\238\055\179\189\030\160\084\022\106\095\003\231\086\239\178\187\003\111\097\122\190\136\227\173\217\003\072\237\005\013\215\081\191\071\225\012\190\241\241\236\255\093\004\128\000\080\004\128\034\000\020\001\160\008\000\069\000\040\002\064\017\000\138\000\080\004\128\034\000\020\001\160\008\000\069\000\040\002\064\017\000\138\000\080\004\128\034\000\020\001\160\008\000\069\000\040\002\064\017\000\138\000\080\004\128\034\000\020\001\160\008\000\069\000\040\002\064\017\000\138\000\080\004\128\034\000\020\001\160\008\000\069\000\040\002\064\017\000\138\000\080\004\128\034\000\020\001\160\008\000\069\000\040\002\064\017\000\138\000\080\004\128\034\000\020\001\160\008\000\069\000\040\002\064\017\000\138\000\080\004\128\034\000\020\001\160\008\000\069\000\040\002\064\017\000\138\000\080\004\128\034\000\020\001\160\008\000\117\110\000\070\231\188\116\029\245\123\052\158\193\183\039\000\074\047\024\033\006\231\028\227\061\189\185\152\222\059\247\188\228\075\017\140\206\185\096\044\124\208\201\136\001\062\248\150\062\093\076\183\224\067\201\011\207\191\023\011\188\051\254\160\013\215\031\116\132\056\164\035\126\240\007\250\116\049\125\080\011\017\061\056\130\023\214\194\180\032\024\187\074\186\031\028\227\031\083\028\084\156\068\228\070\068\062\210\171\179\235\099\186\183\039\227\190\103\063\044\016\134\082\089\240\122\000\013\128\054\062\199\030\002\179\193\039\150\130\179\167\254\079\106\213\227\189\215\190\028\085\102\030\012\243\095\244\000\181\213\127\128\015\222\137\200\022\098\151\098\015\153\224\011\051\193\217\086\254\023\088\249\123\184\223\218\131\061\248\212\148\005\098\250\033\020\026\062\092\253\123\003\128\149\136\044\211\123\245\233\189\068\068\022\034\242\119\170\091\119\034\242\077\068\126\208\207\230\110\255\054\221\187\027\181\234\243\189\127\072\161\001\216\059\089\192\108\008\035\172\254\080\072\255\007\000\096\007\198\175\146\209\011\101\126\126\159\040\034\127\136\200\159\009\134\064\111\155\247\248\057\242\106\206\247\254\222\136\007\005\193\163\209\160\015\086\035\024\027\075\000\002\176\077\134\047\211\049\026\230\231\215\101\056\186\020\004\160\029\128\236\065\078\233\121\225\221\139\200\191\041\126\166\192\108\128\000\052\149\000\157\001\134\100\214\041\025\171\235\255\066\173\122\203\252\252\154\021\092\151\001\032\004\109\171\127\048\234\254\003\000\240\015\064\112\095\232\003\242\251\224\144\232\089\006\064\243\145\190\000\102\246\137\170\094\069\103\152\159\179\197\006\000\208\089\130\170\067\160\059\254\045\000\240\019\032\248\169\202\192\190\097\039\240\162\007\176\210\079\006\160\075\255\068\007\225\153\175\155\021\175\071\160\218\000\056\040\000\182\000\000\198\189\211\003\088\037\224\153\162\053\030\052\210\080\080\000\116\006\048\152\174\054\041\150\106\135\192\167\143\109\194\006\060\239\237\183\170\251\215\141\224\182\208\000\186\163\225\104\024\031\140\044\016\210\027\090\053\124\112\026\197\181\001\000\051\192\244\018\144\001\216\169\045\224\086\109\003\117\250\247\086\255\104\101\000\041\244\002\090\193\048\095\167\171\149\154\015\016\128\249\000\120\051\152\157\179\255\063\084\050\128\120\131\032\077\199\160\076\063\025\251\252\193\200\000\088\251\117\250\103\009\104\047\001\186\012\232\241\175\053\010\182\246\254\165\103\001\102\019\040\149\044\048\026\123\085\093\002\112\070\128\171\159\219\192\105\067\032\204\002\248\208\231\081\253\124\128\107\074\143\134\165\212\004\006\231\092\103\131\081\081\058\164\015\095\192\063\021\149\249\061\205\159\005\129\247\008\254\160\076\063\194\117\131\097\190\024\025\126\244\122\000\113\104\025\140\012\048\026\125\128\054\158\067\160\215\015\131\052\008\250\188\246\029\000\023\004\111\023\080\131\064\151\128\001\006\070\218\120\061\006\038\004\117\243\173\251\107\025\125\106\168\247\165\044\032\222\032\040\056\041\163\212\004\246\048\056\234\012\243\105\252\252\044\096\133\094\237\250\040\053\243\061\000\106\153\096\128\237\162\126\130\136\134\119\170\241\035\000\243\155\065\109\176\117\094\251\254\159\217\004\134\113\044\126\107\056\024\231\193\056\247\012\015\198\245\212\180\050\080\250\130\174\101\120\179\249\165\012\048\181\028\096\070\240\076\167\249\243\033\040\193\080\050\190\104\126\011\000\218\108\107\098\104\093\023\156\236\065\205\131\192\051\217\059\054\153\223\082\002\164\098\162\087\034\188\215\016\132\233\198\123\233\188\150\226\155\140\157\002\064\043\008\052\254\247\128\240\042\227\179\254\003\128\084\133\067\180\132\115\100\000\000\000\000\073\069\078\068\174\066\096\130"
+local function GetGlowAsset()
+if GlowAssetAttempted then return GlowAsset end
+GlowAssetAttempted=true
+local GetAsset=getcustomasset or getsynasset
+if type(GetAsset)~="function"or type(writefile)~="function"then return end
+local Success,Asset=pcall(function()
+local Folder="WindUI/Assets"
+if type(isfolder)=="function"and type(makefolder)=="function"then
+if not isfolder("WindUI")then makefolder("WindUI")end
+if not isfolder(Folder)then makefolder(Folder)end
+else Folder="."end
+local Path=Folder.."/window-border-glow-25.png"
+if type(isfile)~="function"or not isfile(Path)then writefile(Path,GlowPng)end
+return GetAsset(Path)
+end)
+if Success and type(Asset)=="string"and Asset~=""then GlowAsset=Asset end
+return GlowAsset
+end
 
 function ab.Color(ac,ad)
 if typeof(ac)=="Color3"then return ac end
@@ -29494,6 +29548,12 @@ AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
 BackgroundTransparency=1,Active=false,ClipsDescendants=false,
 ZIndex=math.max(af.ZIndex or 1,1),Parent=af,
 },{aa.New("UICorner",{CornerRadius=ah})})
+local Asset=ae=="Window"and GetGlowAsset()
+if Asset then
+ak.Texture=aa.New("ImageLabel",{Name="SoftBorderGlow",Image=Asset,ScaleType="Slice",SliceCenter=Rect.new(29,29,99,99),
+AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),BackgroundTransparency=1,
+Active=false,ZIndex=ak.Glow.ZIndex,ThemeTag={ImageColor3="Accent"},Parent=ak.Glow})
+else
 for an=1,aj do
 local ao=aa.New("UIStroke",{
 Name="GlowBorder",ApplyStrokeMode="Border",LineJoinMode="Round",
@@ -29503,8 +29563,15 @@ ThemeTag={Color="Accent"},Parent=ak.Glow,
 table.insert(ak.Layers,{Stroke=ao})
 end
 end
+end
 if not ak.Glow then return end
 ak.Glow.Visible=am.Enabled and ak.Active
+if ak.Texture then
+ak.Texture.Size=UDim2.new(1,am.Size*2,1,am.Size*2)
+ak.Texture.SliceScale=am.Size/20
+ak.Texture.ImageTransparency=am.Transparency
+aa.SetThemeTag(ak.Texture,{ImageColor3=am.Color or ab.Tag(ac,ad,"Accent")})
+end
 for an,ao in ipairs(ak.Layers)do
 local Distance=(an-1)/aj
 ao.Stroke.BorderOffset=UDim.new(0,Distance*am.Size)
@@ -29571,6 +29638,7 @@ aa.UpdateTheme()
 end
 
 return ab 
+
 end function a.C():typeof(__modImpl())local aa=a.cache.C if not aa then aa={c=__modImpl()}a.cache.C=aa end return aa.c end end do local function __modImpl()
 
 
@@ -29897,6 +29965,7 @@ return ad
 end function a.D():typeof(__modImpl())local aa=a.cache.D if not aa then aa={c=__modImpl()}a.cache.D=aa end return aa.c end end do local function __modImpl()
 
 
+
 local aa=a.j()
 local ab=game:GetService"UserInputService"
 
@@ -29991,6 +30060,7 @@ af._KeybindSetup=true
 local ag=type(af.KeybindList)=="table"and af.KeybindList or{}
 af._KeybindListVisible=af.KeybindList~=false and af.KeybindList~=nil and ag.Enabled~=false
 af._KeybindListControls=setmetatable({},{__mode="k"})
+af._KeybindFilterControls=setmetatable({},{__mode="k"})
 function af.SetKeybindListVisible(ah,ai)
 local aj=ah._KeybindListVisible
 ah._KeybindListVisible=ai~=false
@@ -30024,6 +30094,7 @@ end
 function af.SetKeybindListCurrentTabOnly(Self,Value)
 local Router=ac.Router(Self)
 Router.ListOptions.CurrentTabOnly=Value==true
+for Control in pairs(Self._KeybindFilterControls)do Control:_SyncKeybindFilterValue(Value==true)end
 Router:RefreshList()
 return Self
 end
@@ -30044,6 +30115,13 @@ ag:_SyncKeybindListValue(af._KeybindListVisible)
 ag.ToggleFrame.UIElements.Main.Destroying:Connect(function()
 af._KeybindListControls[ag]=nil
 end)
+end
+
+function ac.BindListFilter(Window,Control)
+ac.Setup(Window)
+Window._KeybindFilterControls[Control]=true
+Control:_SyncKeybindFilterValue(ac.Router(Window).ListOptions.CurrentTabOnly==true)
+Control.ToggleFrame.UIElements.Main.Destroying:Connect(function()Window._KeybindFilterControls[Control]=nil end)
 end
 
 function ac.Router(af)
@@ -30230,7 +30308,10 @@ aa.SetThemeTag(am.RowKey,{TextColor3=am.Conflict and WarningColor or"Placeholder
 aa.SetThemeTag(am.RowTitle,{TextColor3=am.Conflict and WarningColor or am.Owner.Value==true and"Accent"or"Placeholder"})
 end
 end
-ah.Header.Size=UDim2.new(1,-52,0,aj)
+ah.Header.Size=UDim2.new(1,-80,0,aj)
+ah.FilterButton.BackgroundTransparency=ah.ListOptions.CurrentTabOnly and 0.84 or 1
+ah.FilterIcon.ImageTransparency=ah.ListOptions.CurrentTabOnly and 0.05 or 0.45
+aa.SetThemeTag(ah.FilterIcon,{ImageColor3=ah.ListOptions.CurrentTabOnly and"Accent"or"Placeholder"})
 ah.ClearAll.Active=HasControlKeys
 ah.ClearIcon.ImageTransparency=HasControlKeys and 0.25 or 0.7
 ah.Line.Position=UDim2.fromOffset(0,aj)
@@ -30266,7 +30347,20 @@ aa.AddSignal(ah.ClearAll.InputBegan,function(Input)
 if Input.UserInputType==Enum.UserInputType.MouseButton1 or Input.UserInputType==Enum.UserInputType.Touch then ah:StopPickingForInput(Input)end
 end)
 aa.AddSignal(ah.ClearAll.Activated,function()ah:ClearBindings(false)end)
-ah.Line=aa.New("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.fromOffset(0,28),BackgroundTransparency=0.75,ThemeTag={BackgroundColor3="Outline"},Parent=ag.List})
+ah.FilterButton=aa.New("TextButton",{Name="FilterCurrentTab",Text="",Size=UDim2.fromOffset(22,22),Position=UDim2.new(1,-35,0,3),
+AnchorPoint=Vector2.new(1,0),BackgroundTransparency=1,AutoButtonColor=false,ThemeTag={BackgroundColor3="Accent"},Parent=ag.List},
+{aa.New("UICorner",{CornerRadius=UDim.new(0,4)})})
+local FilterAsset=aa.Icon("lucide:filter")
+ah.FilterIcon=aa.New("ImageLabel",{Image=FilterAsset[1],ImageRectSize=FilterAsset[2].ImageRectSize,ImageRectOffset=FilterAsset[2].ImageRectPosition,
+Size=UDim2.fromOffset(12,12),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=1,
+ThemeTag={ImageColor3="Placeholder"},Parent=ah.FilterButton})
+aa.AddSignal(ah.FilterButton.InputBegan,function(Input)
+if Input.UserInputType==Enum.UserInputType.MouseButton1 or Input.UserInputType==Enum.UserInputType.Touch then ah:StopPickingForInput(Input)end
+end)
+aa.AddSignal(ah.FilterButton.Activated,function()af:SetKeybindListCurrentTabOnly(not ah.ListOptions.CurrentTabOnly)end)
+aa.AddSignal(ah.FilterButton.MouseEnter,function()Hint.Text=ah.ListOptions.CurrentTabOnly and"Current tab"or"All tabs";Hint.Visible=true end)
+aa.AddSignal(ah.FilterButton.MouseLeave,function()Hint.Visible=false;Hint.Text="Clear bindings"end)
+ah.Line=aa.New("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.fromOffset(0,28),BackgroundTransparency=0.2,ThemeTag={BackgroundColor3="Accent"},Parent=ag.List})
 if ai.Draggable~=false then ah.Drag=aa.Drag(ag.List,{ah.Header})end
 ah.VisibilityRow=aa.New("Frame",{Name="KeybindListToggle",Size=UDim2.new(1,-20,0,26),
 Position=UDim2.fromOffset(10,32),Visible=true,BackgroundTransparency=1,Parent=ah.List})
@@ -30429,6 +30523,7 @@ return ao
 end
 
 return ac 
+
 
 end function a.E():typeof(__modImpl())local aa=a.cache.E if not aa then aa={c=__modImpl()}a.cache.E=aa end return aa.c end end do local function __modImpl()
 
@@ -32213,6 +32308,7 @@ end
 
 return aa end function a.M():typeof(__modImpl())local aa=a.cache.M if not aa then aa={c=__modImpl()}a.cache.M=aa end return aa.c end end do local function __modImpl()
 
+
 local aa=a.j()
 local ab=aa.New local ac=
 aa.Tween
@@ -32224,6 +32320,8 @@ local af={}
 
 function af.New(ag,ah)
 local panelToggle=ah.Keybind=="UI"or ah.SyncKeybindList==true
+local filterToggle=ah.KeybindFilter==true
+if filterToggle then a.E().Setup(ah.Window);ah.Value=a.E().Router(ah.Window).ListOptions.CurrentTabOnly==true end
 if panelToggle then
 assert(ah.Type~="Checkbox",'Keybind = "UI" requires a switch toggle')
 a.E().Setup(ah.Window)
@@ -32333,6 +32431,7 @@ am:Set(aq,ar,as or false)
 ak=aq
 ai.Value=aq
 if panelToggle then ah.Window:SetKeybindListVisible(aq)end
+if filterToggle then ah.Window:SetKeybindListCurrentTabOnly(aq)end
 if ah.Window._KeybindRouter then ah.Window._KeybindRouter:RefreshList()end
 end
 end
@@ -32344,6 +32443,14 @@ am:Set(aq,false,ah.Window.NewElements)
 ak=aq
 ai.Value=aq
 if ah.Window._KeybindRouter then ah.Window._KeybindRouter:RefreshList()end
+end
+end
+
+if filterToggle then
+function ai._SyncKeybindFilterValue(Self,Value)
+if ai.Value==Value then return end
+am:Set(Value,false,ah.Window.NewElements)
+ak,ai.Value=Value,Value
 end
 end
 
@@ -32419,11 +32526,13 @@ function ai.ClearKeybind(Self)return Self.Keybind:Clear()end
 end
 
 if panelToggle then a.E().BindListToggle(ah.Window,ai)end
+if filterToggle then a.E().BindListFilter(ah.Window,ai)end
 
 return ai.__type,ai
 end
 
-return af end function a.N():typeof(__modImpl())local aa=a.cache.N if not aa then aa={c=__modImpl()}a.cache.N=aa end return aa.c end end do local function __modImpl()
+return af 
+end function a.N():typeof(__modImpl())local aa=a.cache.N if not aa then aa={c=__modImpl()}a.cache.N=aa end return aa.c end end do local function __modImpl()
 
 local aa=(cloneref or clonereference or function(aa)
 return aa
@@ -38300,6 +38409,7 @@ return aq
 end
 
 return ae end function a.aj():typeof(__modImpl())local aa=a.cache.aj if not aa then aa={c=__modImpl()}a.cache.aj=aa end return aa.c end end do local function __modImpl()
+
 local Creator = a.j()
 local InputService = game:GetService("UserInputService")
 local Settings = {}
@@ -38335,9 +38445,121 @@ end
 
 function Settings.Setup(Window)
     if Window._SettingHistory then return Window._SettingHistory end
-    local History = { Window = Window, States = {}, Entries = {}, Suspended = 0, Limit = 50 }
+    local History = { Window = Window, States = {}, Entries = {}, Suspended = 0, Limit = 50, RecentSeconds = 6, RecentToken = 0, ActionOwners = setmetatable({}, { __mode = "k" }) }
     Window._SettingHistory = History
 
+    function History:HideRecent()
+        self.RecentToken += 1
+        if self.RecentTimer then pcall(task.cancel, self.RecentTimer); self.RecentTimer = nil end
+        self.Recent = nil
+        for _, State in pairs(self.States) do if State.Footer then State.Footer.Visible = false end end
+    end
+    function History:UndoFooter(Element)
+        local State = self.States[Element]
+        if not State or not State.Alive or not State.Container then return end
+        if State.Footer then return State end
+        local Container = State.Container
+        local Layout = Container:FindFirstChildWhichIsA("UIListLayout")
+        if Layout then Layout.SortOrder = "LayoutOrder" end
+        State.Footer = Creator.New("Frame", {
+            Name = "RecentUndo", Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1,
+            LayoutOrder = 10000, Visible = false, Parent = Container,
+        })
+        State.UndoButton = Creator.New("TextButton", {
+            Name = "UndoChanges", Text = "", Size = UDim2.fromOffset(112, 22), Position = UDim2.fromScale(1, 0),
+            AnchorPoint = Vector2.new(1, 0), BackgroundTransparency = 0.94, AutoButtonColor = false,
+            ThemeTag = { BackgroundColor3 = "Accent" }, Parent = State.Footer,
+        }, {
+            Creator.New("UICorner", { CornerRadius = UDim.new(0, 4) }),
+            Creator.New("UIStroke", { Thickness = 1, Transparency = 0.82, ThemeTag = { Color = "Accent" } }),
+        })
+        local Icon = Creator.Icon("lucide:undo-2")
+        Creator.New("ImageLabel", {
+            Image = Icon[1], ImageRectSize = Icon[2].ImageRectSize, ImageRectOffset = Icon[2].ImageRectPosition,
+            Size = UDim2.fromOffset(11, 11), Position = UDim2.new(0, 7, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundTransparency = 1, ImageTransparency = 0.1, ThemeTag = { ImageColor3 = "Accent" }, Parent = State.UndoButton,
+        })
+        State.UndoText = Creator.New("TextLabel", {
+            Text = "Undo change", Size = UDim2.new(1, -28, 1, 0), Position = UDim2.fromOffset(23, 0), TextSize = 11,
+            TextXAlignment = "Left", BackgroundTransparency = 1, FontFace = Font.new(Creator.Font, Enum.FontWeight.Regular),
+            ThemeTag = { TextColor3 = "Accent" }, Parent = State.UndoButton,
+        })
+        local function FitUndo()
+            local Width = math.max(State.UndoText.TextBounds.X, #State.UndoText.Text * State.UndoText.TextSize * 0.62)
+            State.UndoButton.Size = UDim2.fromOffset(math.max(104, math.ceil(Width) + 32), 22)
+        end
+        Creator.AddSignal(State.UndoText:GetPropertyChangedSignal("TextBounds"), FitUndo)
+        State.FitUndo = FitUndo
+        Creator.AddSignal(State.UndoButton.MouseEnter, function() State.UndoButton.BackgroundTransparency = 0.86 end)
+        Creator.AddSignal(State.UndoButton.MouseLeave, function() State.UndoButton.BackgroundTransparency = 0.94 end)
+        Creator.AddSignal(State.UndoButton.Activated, function() self:UndoRecent() end)
+        return State
+    end
+    function History:ShowRecent()
+        local Recent = self.Recent
+        if not Recent then return end
+        local Entries, Elements, Count = {}, {}, 0
+        for _, Entry in ipairs(Recent.Entries) do
+            if table.find(self.Entries, Entry) then
+                table.insert(Entries, Entry)
+                Count += #Entry.Changes
+                for _, Change in ipairs(Entry.Changes) do Elements[Change.Element] = true end
+                if Entry.Action then Elements[Entry.Action] = true end
+            end
+        end
+        Recent.Entries, Recent.Count = Entries, Count
+        if Count == 0 then self:HideRecent(); return end
+        for Element, State in pairs(self.States) do
+            if Elements[Element] then
+                State = self:UndoFooter(Element)
+                if State then
+                    State.Footer.Visible = true
+                    State.UndoText.Text = Count == 1 and "Undo change" or "Undo changes x" .. Count
+                    State.FitUndo()
+                end
+            elseif State.Footer then State.Footer.Visible = false end
+        end
+    end
+    function History:RecentChanged(Entry)
+        if not self.Recent or time() >= self.Recent.Expires then self:HideRecent(); self.Recent = { Entries = {} } end
+        if Entry and not table.find(self.Recent.Entries, Entry) then table.insert(self.Recent.Entries, Entry) end
+        self.Recent.Expires = time() + self.RecentSeconds
+        self:ShowRecent()
+        if not self.Recent then return end
+        self.RecentToken += 1
+        local Token = self.RecentToken
+        if self.RecentTimer then pcall(task.cancel, self.RecentTimer) end
+        self.RecentTimer = task.delay(self.RecentSeconds, function()
+            if not Window.Destroyed and self.RecentToken == Token then self:HideRecent() end
+        end)
+    end
+    function History:UndoRecent()
+        local Recent = self.Recent
+        if not Recent or time() >= Recent.Expires then self:HideRecent(); return false, "Undo has expired" end
+        for _, Entry in ipairs(Recent.Entries) do
+            for _, Change in ipairs(Entry.Changes) do
+                local State = self.States[Change.Element]
+                if not State or not State.Alive or Change.Element.Locked then return false, "The setting is unavailable or locked" end
+            end
+        end
+        self.Suspended += 1
+        local Success, Message = pcall(function()
+            for EntryIndex = #Recent.Entries, 1, -1 do
+                for ChangeIndex = #Recent.Entries[EntryIndex].Changes, 1, -1 do
+                    local Change = Recent.Entries[EntryIndex].Changes[ChangeIndex]
+                    self:Restore(Change.Element, Change.Before)
+                end
+            end
+        end)
+        self.Suspended -= 1
+        if not Success then return false, Message end
+        for _, Entry in ipairs(Recent.Entries) do
+            local Index = table.find(self.Entries, Entry)
+            if Index then table.remove(self.Entries, Index) end
+        end
+        self:HideRecent()
+        return true
+    end
     function History:Push(Changes, Title)
         if self.Suspended > 0 or Window.Destroyed or #Changes == 0 then return end
         local Last = self.Entries[#self.Entries]
@@ -38345,10 +38567,13 @@ function Settings.Setup(Window)
             and self.Pointer and Last.Gesture == self.Pointer then
             Last.Changes[1].After = Copy(Changes[1].After)
             if Equal(Last.Changes[1].Before, Last.Changes[1].After) then table.remove(self.Entries) end
+            self:RecentChanged(Last)
             return
         end
-        table.insert(self.Entries, { Changes = Changes, Title = Title, Gesture = self.Pointer })
+        local Entry = { Changes = Changes, Title = Title, Gesture = self.Pointer, Action = self.ActionOwners[coroutine.running()] }
+        table.insert(self.Entries, Entry)
         if #self.Entries > self.Limit then table.remove(self.Entries, 1) end
+        self:RecentChanged(Entry)
     end
     function History:Commit(Element)
         local State = self.States[Element]
@@ -38411,9 +38636,11 @@ function Settings.Setup(Window)
         self.Suspended -= 1
         if not Success then return false, Message end
         table.remove(self.Entries)
+        self:ShowRecent()
         return true, Entry.Title
     end
     function History:Clear()
+        self:HideRecent()
         table.clear(self.Entries)
         for Element, State in pairs(self.States) do if State.Alive then State.Last = Snapshot(Element) end end
     end
@@ -38428,9 +38655,9 @@ function Settings.Setup(Window)
         local Scale = math.max(tonumber(Window.GetUIScale and Window:GetUIScale()) or 1, 0.01)
         local Position, Size = Main.AbsolutePosition, Main.AbsoluteSize
         local X = math.clamp((Input.Position.X - Position.X) / Scale, 0, math.max(0, Size.X / Scale - 166))
-        local Y = math.clamp((Input.Position.Y - Position.Y) / Scale, 0, math.max(0, Size.Y / Scale - 66))
+        local Y = math.clamp((Input.Position.Y - Position.Y) / Scale, 0, math.max(0, Size.Y / Scale - 36))
         local Menu = Creator.New("Frame", {
-            Name = "SettingActions", Size = UDim2.fromOffset(166, 66), Position = UDim2.fromOffset(X, Y),
+            Name = "SettingActions", Size = UDim2.fromOffset(166, 36), Position = UDim2.fromOffset(X, Y),
             BackgroundTransparency = 0.04, ZIndex = 200, ThemeTag = { BackgroundColor3 = "Dialog" }, Parent = Main,
         }, {
             Creator.New("UICorner", { CornerRadius = UDim.new(0, 6) }),
@@ -38449,7 +38676,6 @@ function Settings.Setup(Window)
             Creator.AddSignal(Button.Activated, function() self:CloseMenu(); if Enabled then Callback() end end)
         end
         Action("Reset setting", 0, function() self:Reset(Element) end, true)
-        Action("Undo last change", 1, function() self:Undo() end, #self.Entries > 0)
         self.MenuInput = InputService.InputBegan:Connect(function(NextInput)
             if NextInput == Input then return end
             if NextInput.KeyCode == Enum.KeyCode.Escape or (NextInput.UserInputType == Enum.UserInputType.MouseButton1 or NextInput.UserInputType == Enum.UserInputType.MouseButton2 or NextInput.UserInputType == Enum.UserInputType.Touch) and not Inside(Menu, NextInput) then self:CloseMenu() end
@@ -38457,9 +38683,12 @@ function Settings.Setup(Window)
     end
     function History:Track(Element, Options)
         Options = Options or {}
-        if Options.History == false or not Supported[Element.__type] or Element.__type == "Button" and not Element.Keybind or self.States[Element] then return end
+        if Options.History == false or not Supported[Element.__type] or self.States[Element] then return end
         local State = { Initial = Snapshot(Element), Last = Snapshot(Element), Alive = true }
         self.States[Element] = State
+        for Key, Frame in pairs(Element) do
+            if typeof(Frame) == "table" and type(Key) == "string" and Key ~= "ElementFrame" and Key:match("Frame$") and Frame.UIElements and Frame.UIElements.Container then State.Container = Frame.UIElements.Container; break end
+        end
         local function Wrap(Object, Method)
             local Original = Object and Object[Method]
             if type(Original) ~= "function" then return end
@@ -38469,24 +38698,30 @@ function Settings.Setup(Window)
                 return table.unpack(Result, 1, Result.n)
             end
         end
-        for _, Method in ipairs({ "Set", "Select", "Update", "_SyncKeybindListValue" }) do Wrap(Element, Method) end
+        for _, Method in ipairs({ "Set", "Select", "Update", "_SyncKeybindListValue", "_SyncKeybindFilterValue" }) do Wrap(Element, Method) end
         Wrap(Element.Keybind or Element._KeybindRecord, "Set")
         local Callback = Element.Callback
         if type(Callback) == "function" then
             Element.Callback = function(...)
                 History:Commit(Element)
-                local Result = table.pack(Callback(...))
+                local Thread = coroutine.running()
+                local Action = History.ActionOwners[Thread]
+                if Element.__type == "Button" then History.ActionOwners[Thread] = Element end
+                local Result = table.pack(pcall(Callback, ...))
+                History.ActionOwners[Thread] = Action
                 History:Commit(Element)
-                return table.unpack(Result, 1, Result.n)
+                if not Result[1] then error(Result[2], 0) end
+                return table.unpack(Result, 2, Result.n)
             end
         end
         function Element:Reset() return History:Reset(self) end
         function Element:GetDefault() return Copy(State.Initial.Value) end
         if Element.ElementFrame then
-            if Options.ContextMenu ~= false then
+            if Options.ContextMenu ~= false and (Element.__type ~= "Button" or Element.Keybind) then
                 Creator.AddSignal(Element.ElementFrame.InputBegan, function(Input)
                     local Picker = Element.Keybind and Element.Keybind.Button or Element.__type == "Keybind" and Element.UIElements.Keybind
-                    if Input.UserInputType == Enum.UserInputType.MouseButton2 and not Inside(Picker, Input) then History:OpenMenu(Element, Input) end
+                    local Router = Window._KeybindRouter
+                    if Input.UserInputType == Enum.UserInputType.MouseButton2 and not Inside(Picker, Input) and not (Router and (Router.Picking or Router.LastPickInput == Input)) then History:OpenMenu(Element, Input) end
                 end)
             end
             Creator.AddSignal(Element.ElementFrame.Destroying, function()
@@ -38496,6 +38731,7 @@ function Settings.Setup(Window)
                     for _, Change in ipairs(History.Entries[Index].Changes) do if Change.Element == Element then table.remove(History.Entries, Index); break end end
                 end
                 History:CloseMenu()
+                History:ShowRecent()
             end)
         end
     end
@@ -38512,12 +38748,15 @@ function Settings.Setup(Window)
     Creator.AddSignal(Window.UIElements.Main.Destroying, function()
         Began:Disconnect(); Ended:Disconnect(); Focus:Disconnect()
         History:CloseMenu()
+        History:HideRecent()
+        table.clear(History.ActionOwners)
         table.clear(History.Entries); table.clear(History.States)
     end)
     return History
 end
 
 return Settings
+
 
 end function a.al():typeof(__modImpl())local aa=a.cache.al if not aa then aa={c=__modImpl()}a.cache.al=aa end return aa.c end end do local function __modImpl()
 
