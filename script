@@ -1,5 +1,5 @@
 --[[
-WindUI Fluent skin: customization build 22
+WindUI Fluent skin: customization build 23
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
@@ -13,6 +13,7 @@ Interface toggles can synchronize the keybind panel directly with Keybind = "UI"
 Hidden tabs, a draggable sidebar divider and font-measured, wrapping profile names.
 Centered hover-only sidebar divider, compact default width and manual resizing that keeps profile names wrapped.
 SelectTab is available automatically after creating the window and accepts tab objects.
+Keybind clear actions, code-defined default-size reset and configurable dropdown placeholders.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
 MIT License
@@ -29650,6 +29651,33 @@ local function InputKey(af)
 return af.UserInputType==Enum.UserInputType.Keyboard and af.KeyCode.Name or af.UserInputType.Name
 end
 
+local function CanChange(Record)
+return not Record.Owner.Locked and Record.Owner.CanChange~=false and Record.Options.CanChange~=false
+end
+
+local function ClearButton(Parent,Router,Callback)
+local Button=aa.New("TextButton",{
+Name="ClearKeybind",Text="",Size=UDim2.fromOffset(18,22),
+Position=UDim2.fromScale(1,0.5),AnchorPoint=Vector2.new(1,0.5),
+BackgroundTransparency=1,AutoButtonColor=false,Active=true,Parent=Parent,
+ThemeTag={BackgroundColor3="ElementBackground"},
+},{aa.New("UICorner",{CornerRadius=UDim.new(0,4)})})
+for _,Angle in ipairs({45,-45})do
+aa.New("Frame",{Size=UDim2.fromOffset(1,9),Position=UDim2.fromScale(0.5,0.5),
+AnchorPoint=Vector2.new(0.5,0.5),Rotation=Angle,BackgroundTransparency=0.35,
+ThemeTag={BackgroundColor3="Placeholder"},Parent=Button})
+end
+aa.AddSignal(Button.InputBegan,function(Input)
+if Input.UserInputType==Enum.UserInputType.MouseButton1 or Input.UserInputType==Enum.UserInputType.Touch then
+Router:StopPickingForInput(Input)
+end
+end)
+aa.AddSignal(Button.Activated,Callback)
+aa.AddSignal(Button.MouseEnter,function()Button.BackgroundTransparency=0.9 end)
+aa.AddSignal(Button.MouseLeave,function()Button.BackgroundTransparency=1 end)
+return Button
+end
+
 function ac.Setup(af)
 if af._KeybindSetup then return end
 af._KeybindSetup=true
@@ -29682,6 +29710,10 @@ aj:EnsureList()
 aj.VisibilityBind:Set(ai)
 return ah
 end
+function af.ClearKeybinds(ah,IncludePanelToggle)
+local Router=ah._KeybindRouter
+return Router and Router:ClearBindings(IncludePanelToggle==true)or 0
+end
 if ac.Normalize(ag.ToggleKey)~="None"then ac.Router(af)end
 end
 
@@ -29701,6 +29733,42 @@ if af._KeybindRouter then return af._KeybindRouter end
 local ag={Records={},Picking=nil}
 af._KeybindRouter=ag
 ag.ListOptions=type(af.KeybindList)=="table"and af.KeybindList or{}
+function ag.StopPickingForInput(ah,Input)
+ah.ClearInput=Input
+local Picking=ah.Picking
+ah.Picking=nil
+if Picking then Picking:Refresh()end
+if ah.LastPickInput==Input and ah.LastPickRecord then
+ah.LastPickRecord:Set(ah.LastPickValue)
+ah.LastPickRecord=nil
+end
+end
+function ag.BeginPicking(ah,Record)
+if not CanChange(Record)or af.Destroyed then return false end
+local Previous=ah.Picking
+ah.Picking=Previous==Record and nil or Record
+if Previous then Previous:Refresh()end
+Record:Refresh()
+return true
+end
+function ag.ClearRecord(ah,Record)
+if not CanChange(Record)or af.Destroyed then return false end
+Record:Set("None")
+return true
+end
+function ag.ClearBindings(ah,IncludePanelToggle)
+local Picking=ah.Picking
+ah.Picking=nil
+if Picking then Picking:Refresh()end
+local Count=0
+for _,Record in ipairs(ah.Records)do
+if (IncludePanelToggle or Record~=ah.VisibilityBind)and Record.Value~="None"and CanChange(Record)then
+Record:Set("None")
+Count+=1
+end
+end
+return Count
+end
 function ag.RefreshVisibility(ah)
 if ah.List then
 ah.List.Visible=af._KeybindListVisible and not af.IsFullscreen and not af.Closed and not af.Destroyed
@@ -29715,22 +29783,31 @@ function ag.RefreshList(ah)
 if not ah.List or not ah.List.Parent then return end
 local ai,aj=26,28
 local ak=ah.VisibilityRow and 1 or 0
+local HasControlKeys=false
+if ah.VisibilityClear then ah.VisibilityClear.Visible=ah.VisibilityBind.Value~="None"and CanChange(ah.VisibilityBind)end
 if ah.VisibilityRow then
 ah.VisibilityRow.Size=UDim2.new(1,-20,0,ai)
 ah.VisibilityRow.Position=UDim2.fromOffset(10,aj+4)
 end
 for al,am in ipairs(ah.Records)do
+if am~=ah.VisibilityBind and am.Value~="None"and CanChange(am)then HasControlKeys=true end
 if am.Options.ShowInList==false then continue end
 local an=(am.Value~="None"or ah.ListOptions.ShowUnbound==true)
 and(ah.ListOptions.OnlyActive~=true or am.Owner.Value==true)
 if not am.Row then
 am.Row=aa.New("Frame",{Size=UDim2.new(1,-20,0,22),Position=UDim2.fromOffset(10,0),BackgroundTransparency=1,Parent=ah.List})
-am.RowTitle=aa.New("TextLabel",{Size=UDim2.new(1,-54,1,0),TextSize=12,TextXAlignment="Left",TextTruncate="AtEnd",BackgroundTransparency=1,RichText=false,
+am.RowTitle=aa.New("TextLabel",{Size=UDim2.new(1,-78,1,0),TextSize=12,TextXAlignment="Left",TextTruncate="AtEnd",BackgroundTransparency=1,RichText=false,
 FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),Parent=am.Row})
-am.RowKey=aa.New("TextLabel",{Size=UDim2.new(0,54,1,0),Position=UDim2.fromScale(1,0),AnchorPoint=Vector2.new(1,0),TextSize=11,TextXAlignment="Right",BackgroundTransparency=1,
+am.RowKey=aa.New("TextButton",{Name="Key",AutoButtonColor=false,Size=UDim2.new(0,54,1,0),Position=UDim2.new(1,-22,0,0),AnchorPoint=Vector2.new(1,0),TextSize=11,TextXAlignment="Right",BackgroundTransparency=1,
 FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),ThemeTag={TextColor3="Placeholder"},Parent=am.Row})
+am.RowClear=ClearButton(am.Row,ah,function()ah:ClearRecord(am)end)
+aa.AddSignal(am.RowKey.Activated,function()ah:BeginPicking(am)end)
+aa.AddSignal(am.RowKey.InputBegan,function(Input)
+if Input.UserInputType==Enum.UserInputType.MouseButton2 and not ah.Picking and ah.LastPickInput~=Input then ah:ClearRecord(am)end
+end)
 end
 am.Row.Visible=an
+am.RowClear.Visible=am.Value~="None"and CanChange(am)
 if an then
 ak+=1
 am.Row.Size=UDim2.new(1,-20,0,ai)
@@ -29740,7 +29817,9 @@ am.RowKey.Text="[ "..(ae[am.Value]or am.Value).." ]"
 aa.SetThemeTag(am.RowTitle,{TextColor3=am.Owner.Value==true and"Accent"or"Placeholder"})
 end
 end
-ah.Header.Size=UDim2.new(1,-20,0,aj)
+ah.Header.Size=UDim2.new(1,-70,0,aj)
+ah.ClearAll.Active=HasControlKeys
+ah.ClearAll.TextTransparency=HasControlKeys and 0.2 or 0.65
 ah.Line.Position=UDim2.fromOffset(0,aj)
 ah.List.Size=UDim2.fromOffset(math.clamp(tonumber(ah.ListOptions.Width)or 220,120,320),aj+10+ak*ai)
 ah:RefreshTransparency()
@@ -29756,6 +29835,14 @@ BackgroundTransparency=0,Visible=false,ThemeTag={BackgroundColor3="Dialog"},Pare
 },{aa.New("UICorner",{CornerRadius=UDim.new(0,6)})})
 ah.Header=aa.New("TextLabel",{Name="Header",Size=UDim2.new(1,-20,0,28),Position=UDim2.fromOffset(10,0),Text=ai.Title or"Keybinds",TextSize=12,
 BackgroundTransparency=1,TextXAlignment="Left",TextTruncate="AtEnd",FontFace=Font.new(aa.Font,Enum.FontWeight.Medium),ThemeTag={TextColor3="Text"},Parent=ag.List})
+ah.ClearAll=aa.New("TextButton",{Name="ClearKeybinds",Text="Clear",Size=UDim2.fromOffset(40,26),
+Position=UDim2.new(1,-10,0,1),AnchorPoint=Vector2.new(1,0),TextSize=11,
+FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),BackgroundTransparency=1,AutoButtonColor=false,
+ThemeTag={TextColor3="Placeholder"},Parent=ag.List})
+aa.AddSignal(ah.ClearAll.InputBegan,function(Input)
+if Input.UserInputType==Enum.UserInputType.MouseButton1 or Input.UserInputType==Enum.UserInputType.Touch then ah:StopPickingForInput(Input)end
+end)
+aa.AddSignal(ah.ClearAll.Activated,function()ah:ClearBindings(false)end)
 ah.Line=aa.New("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.fromOffset(0,28),BackgroundTransparency=0.2,ThemeTag={BackgroundColor3="Accent"},Parent=ag.List})
 if ai.Draggable~=false then aa.Drag(ag.List,{ah.Header})end
 ah.VisibilityRow=aa.New("Frame",{Name="KeybindListToggle",Size=UDim2.new(1,-20,0,26),
@@ -29770,8 +29857,10 @@ ai.ToggleKey=ak
 if ai.ToggleKeyChanged then aa.SafeCallback(ai.ToggleKeyChanged,ak)end
 end,
 },function()af:ToggleKeybindList()end,nil,function(ak)
-ah.VisibilityTitle.Size=UDim2.new(1,-ak-8,1,0)
+ah.VisibilityTitle.Size=UDim2.new(1,-ak-30,1,0)
 end)
+ah.VisibilityBind.Button.Position=UDim2.new(1,-22,0.5,0)
+ah.VisibilityClear=ClearButton(ah.VisibilityRow,ah,function()ah:ClearRecord(ah.VisibilityBind)end)
 ah.VisibilityBind.Row=ah.VisibilityRow
 ah.VisibilityBind.RowTitle=ah.VisibilityTitle
 ah.VisibilityBind.RowKey=ah.VisibilityBind.Label
@@ -29781,9 +29870,11 @@ end
 if af._KeybindListVisible or ac.Normalize(ag.ListOptions.ToggleKey)~="None"then ag:EnsureList()end
 local ah=aa.AddSignal(ab.InputBegan,function(ah,ai)
 local aj=InputKey(ah)
+if ag.ClearInput==ah then return end
 if ab:GetFocusedTextBox()then return end
 if ag.Picking then
 local ak=ag.Picking
+ag.LastPickInput,ag.LastPickRecord,ag.LastPickValue=ah,ak,ak.Value
 if aj=="Escape"then
 ag.Picking=nil
 ak:Refresh()
@@ -29833,6 +29924,7 @@ ah:Disconnect()
 ai:Disconnect()
 aj:Disconnect()
 ag.Picking=nil
+ag.LastPickInput,ag.LastPickRecord,ag.ClearInput=nil,nil,nil
 table.clear(ag.Records)
 end)
 return ag
@@ -29864,6 +29956,7 @@ if al then al(as)end
 an:RefreshList()
 end
 function ao.Set(ar,as)
+if an.Picking==ar then an.Picking=nil end
 if ar.Down and ar.OnRelease then ar.OnRelease()end
 ar.Down=false
 ar.Value=ac.Normalize(as)
@@ -29871,12 +29964,10 @@ ar:Refresh()
 if ar.Options.Changed then aa.SafeCallback(ar.Options.Changed,ar.Value)end
 return ar.Value
 end
-aa.AddSignal(ap.Activated,function()
-if ag.Locked or am.CanChange==false then return end
-local ar=an.Picking
-an.Picking=ar==ao and nil or ao
-if ar then ar:Refresh()end
-ao:Refresh()
+function ao.Clear(ar)return an:ClearRecord(ar)end
+aa.AddSignal(ap.Activated,function()an:BeginPicking(ao)end)
+aa.AddSignal(ap.InputBegan,function(Input)
+if Input.UserInputType==Enum.UserInputType.MouseButton2 and not an.Picking and an.LastPickInput~=Input then an:ClearRecord(ao)end
 end)
 aa.AddSignal(aq:GetPropertyChangedSignal"TextBounds",function()ao:Refresh()end)
 aa.AddSignal(aq:GetPropertyChangedSignal"TextSize",function()ao:Refresh()end)
@@ -31429,6 +31520,7 @@ end
 )
 af.UIElements.Keybind=af.Keybind.Button
 function af.SetKeybind(ai,aj)return ai.Keybind:Set(aj)end
+function af.ClearKeybind(Self)return Self.Keybind:Clear()end
 end
 return af.__type,af
 end
@@ -31873,6 +31965,7 @@ end
 ai.UIElements.Keybind=ai.Keybind.Button
 ai.Keybind.Button.LayoutOrder=2
 function ai.SetKeybind(at,au)return at.Keybind:Set(au)end
+function ai.ClearKeybind(Self)return Self.Keybind:Clear()end
 end
 
 if panelToggle then a.E().BindListToggle(ah.Window,ai)end
@@ -32657,7 +32750,7 @@ function Element:New(Config)
 	for Index, Value in ipairs(Keybind.Blacklist) do Blacklist[InlineKeybind.Normalize(Value)] = true end
 	local Record = {
 		Owner = Keybind, Value = Keybind.Value, Down = false,
-		Options = { IgnoreProcessed = Config.IgnoreProcessed ~= false, Blacklist = Blacklist },
+		Options = { CanChange = Keybind.CanChange, IgnoreProcessed = Config.IgnoreProcessed ~= false, Blacklist = Blacklist },
 		OnPress = function() Creator.SafeCallback(Keybind.Callback, Keybind.Value) end,
 	}
 	function Record:Refresh()
@@ -32667,6 +32760,7 @@ function Element:New(Config)
 		Router:RefreshList()
 	end
 	function Record:Set(Value)
+		if Router.Picking == self then Router.Picking = nil end
 		self.Value = InlineKeybind.Normalize(Value)
 		self.Down = false
 		Keybind.Value = self.Value
@@ -32674,6 +32768,8 @@ function Element:New(Config)
 		return self.Value
 	end
 	function Keybind:Set(Value) return Record:Set(Value) end
+	function Keybind:Clear() return Router:ClearRecord(Record) end
+	function Keybind:ClearKeybind() return self:Clear() end
 	function Keybind:Lock()
 		self.Locked = true
 		Record.Down = false
@@ -32684,12 +32780,9 @@ function Element:New(Config)
 		self.Locked = false
 		return self.KeybindFrame:Unlock()
 	end
-	Creator.AddSignal(Main.MouseButton1Click, function()
-		if Keybind.Locked or not Keybind.CanChange or Config.Window.Destroyed then return end
-		local Previous = Router.Picking
-		Router.Picking = Record
-		if Previous and Previous ~= Record then Previous:Refresh() end
-		Record:Refresh()
+	Creator.AddSignal(Main.MouseButton1Click, function() Router:BeginPicking(Record) end)
+	Creator.AddSignal(Main.InputBegan, function(Input)
+		if Input.UserInputType == Enum.UserInputType.MouseButton2 and not Router.Picking and Router.LastPickInput ~= Input then Router:ClearRecord(Record) end
 	end)
 	Creator.AddSignal(Picker.Frame.Frame.TextLabel:GetPropertyChangedSignal("TextBounds"), function()
 		Picker.Size = UDim2.new(0, 24 + Picker.Frame.Frame.TextLabel.TextBounds.X, 0, 42)
@@ -33013,7 +33106,7 @@ or""
 end
 
 if an.UIElements.Dropdown then
-an.UIElements.Dropdown.Frame.Frame.TextLabel.Text=(av==""and"--"or av)
+an.UIElements.Dropdown.Frame.Frame.TextLabel.Text=(av==""and(an.Placeholder or"...")or av)
 end
 end
 
@@ -33585,6 +33678,7 @@ Values=ao.Values or{},
 MenuWidth=ao.MenuWidth or 180,
 Value=ao.Value,
 AllowNone=ao.AllowNone,
+Placeholder=ao.Placeholder or"...",
 SearchBarEnabled=ao.SearchBarEnabled or false,
 Multi=ao.Multi,
 Callback=ao.Callback or nil,
@@ -37864,6 +37958,10 @@ av.Y.Scale,
 math.clamp(av.Y.Offset,au.MinSize.Y,au.MaxSize.Y)
 )
 
+au._DefaultSize=au.Size
+au._DefaultSideBarWidth=au._SideBarRequestedWidth
+au._DefaultSideBarGap=au.SideBarGap
+
 if au.Topbar=={}then
 au.Topbar={Height=52,ButtonsType="Default"}
 end
@@ -38980,6 +39078,17 @@ au.IsFullscreen=not F
 au:RefreshAuxiliaryUI()
 
 SetSize(true)
+end
+
+function au.ResetSize(C)
+if C.Destroyed then return C end
+C:_StopSideBarDrag()
+if C.IsFullscreen then C:ToggleFullscreen()end
+C:SetSize(C._DefaultSize)
+C:SetSideBarGap(C._DefaultSideBarGap)
+C:SetSideBarWidth(C._DefaultSideBarWidth)
+C:RefreshAuxiliaryUI()
+return C
 end
 
 al.AddSignal(at.WindUI.ScreenGui:GetPropertyChangedSignal"AbsoluteSize",function()
