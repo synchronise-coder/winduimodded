@@ -1,5 +1,5 @@
 --[[
-WindUI Fluent skin: customization build 27
+WindUI Fluent skin: customization build 28
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
@@ -17,7 +17,7 @@ Modifier keybinds, conflict warnings, current-tab filtering and panel position r
 Config autoload, unique names, renaming, duplication and favorites; per-setting reset and bounded undo.
 Wider sidebar with top-right role and optional partial name masking.
 Generated config-name families preserve literal names; synchronized keybind filter and accent separator.
-Six-second grouped topbar Undo, shared soft border glow, filtered binding clearing and config stars.
+Six-second grouped topbar Undo with a fade, shape-following soft control glow, filtered binding clearing and config stars.
 Selectable dropdowns without callbacks, inline config pins, delete-all configs and a whole-UI shortcut.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
@@ -29565,7 +29565,7 @@ end
 
 local function CreateGlow(ac,ad,ae,af,ag,ah)
 local ai={Config=ad,Kind=ae,Active=ag~=false,Layers={}}
-local aj=18
+local aj=ae=="Window"and 18 or 12
 ah=ah or UDim.new(1,0)
 function ai.Refresh(ak)
 local al=ae=="Window"and ac.Appearance.Glow or ak.Config.Glow
@@ -29579,19 +29579,29 @@ AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
 BackgroundTransparency=1,Active=false,ClipsDescendants=false,
 ZIndex=math.max(af.ZIndex or 1,1),Parent=af,
 },{aa.New("UICorner",{CornerRadius=ah})})
-local Asset=GetGlowAsset()
+local Asset=ae=="Window"and GetGlowAsset()
 if Asset then
 ak.Texture=aa.New("ImageLabel",{Name="SoftBorderGlow",Image=Asset,ScaleType="Slice",SliceCenter=Rect.new(29,29,99,99),
 AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),BackgroundTransparency=1,
 Active=false,ZIndex=ak.Glow.ZIndex,ThemeTag={ImageColor3="Accent"},Parent=ak.Glow})
 else
 for an=1,aj do
-local ao=aa.New("UIStroke",{
+local Layer={}
+if ae~="Window"then
+Layer.Corner=aa.New("UICorner",{CornerRadius=ah})
+Layer.Frame=aa.New("Frame",{
+Name="RoundedGlowRing",Size=UDim2.fromScale(1,1),
+AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
+BackgroundTransparency=1,Active=false,ClipsDescendants=false,
+ZIndex=ak.Glow.ZIndex,Parent=ak.Glow,
+},{Layer.Corner})
+end
+Layer.Stroke=aa.New("UIStroke",{
 Name="GlowBorder",ApplyStrokeMode="Border",LineJoinMode="Round",
 BorderStrokePosition="Outer",StrokeSizingMode="FixedSize",ZIndex=aj-an+1,
-ThemeTag={Color="Accent"},Parent=ak.Glow,
+ThemeTag={Color="Accent"},Parent=Layer.Frame or ak.Glow,
 })
-table.insert(ak.Layers,{Stroke=ao})
+table.insert(ak.Layers,Layer)
 end
 end
 end
@@ -29605,8 +29615,16 @@ aa.SetThemeTag(ak.Texture,{ImageColor3=am.Color or ab.Tag(ac,ad,ae=="Window"and"
 end
 for an,ao in ipairs(ak.Layers)do
 local Distance=(an-1)/aj
-ao.Stroke.BorderOffset=UDim.new(0,Distance*am.Size)
+local Outset=Distance*am.Size
+if ao.Frame then
+ao.Frame.Size=UDim2.new(1,Outset*2,1,Outset*2)
+ao.Corner.CornerRadius=UDim.new(ah.Scale,ah.Offset+Outset)
+ao.Stroke.BorderOffset=UDim.new(0,0)
+ao.Stroke.Thickness=am.Size/aj+0.18
+else
+ao.Stroke.BorderOffset=UDim.new(0,Outset)
 ao.Stroke.Thickness=am.Size/aj+0.4
+end
 local Falloff=math.exp(-4.5*Distance*Distance)
 ao.Stroke.Transparency=1-(1-am.Transparency)*Falloff*0.65
 aa.SetThemeTag(ao.Stroke,{Color=am.Color or ab.Tag(ac,ad,ae=="Window"and"Accent"or ae)})
@@ -38562,39 +38580,81 @@ function Settings.Setup(Window)
     local History = { Window = Window, States = {}, Entries = {}, Suspended = 0, Limit = 50, RecentSeconds = 6, RecentToken = 0, ActionOwners = setmetatable({}, { __mode = "k" }) }
     Window._SettingHistory = History
 
-    function History:HideRecent()
+    function History:StopUndoFade()
+        if self.UndoFade then self.UndoFade:Cancel(); self.UndoFade = nil end
+        if self.UndoFadeTimer then pcall(task.cancel, self.UndoFadeTimer); self.UndoFadeTimer = nil end
+    end
+    function History:HideRecent(Immediate)
         self.RecentToken += 1
         if self.RecentTimer then pcall(task.cancel, self.RecentTimer); self.RecentTimer = nil end
         self.Recent = nil
-        if self.UndoButton then self.UndoButton.Visible = false end
+        if not self.UndoGroup then return end
+        self:StopUndoFade()
+        self.UndoButton.Active = false
+        self.UndoHiding = true
+        if Immediate or Window.Destroyed or not self.UndoGroup.Visible then
+            self.UndoGroup.GroupTransparency = 1
+            self.UndoGroup.Visible = false
+            return
+        end
+        local Token = self.RecentToken
+        self.UndoFade = Creator.Tween(self.UndoGroup, 0.25, { GroupTransparency = 1 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        self.UndoFade:Play()
+        self.UndoFadeTimer = task.delay(0.25, function()
+            if Window.Destroyed or self.RecentToken ~= Token or self.Recent then return end
+            self.UndoGroup.Visible = false
+            self.UndoFade, self.UndoFadeTimer = nil, nil
+        end)
     end
     function History:EnsureUndoButton()
-        if self.UndoButton then return end
-        local Parent = Window.UIElements.Main.Main.Topbar.Right
+        if self.UndoGroup then return end
+        self.UndoGroup = Creator.New("CanvasGroup", {
+            Name = "RecentUndo", Size = UDim2.fromOffset(76, 28), LayoutOrder = -10,
+            Visible = false, GroupTransparency = 1, BackgroundTransparency = 1,
+            Parent = Window.UIElements.Main.Main.Topbar.Right,
+        })
+        self.UndoBorder = Creator.New("UIStroke", {
+            ApplyStrokeMode = "Border", BorderStrokePosition = "Inner",
+            Thickness = 1, Transparency = 0.88, ThemeTag = { Color = "Outline" },
+        })
         self.UndoButton = Creator.New("TextButton", {
-            Name = "UndoChanges", Text = "", Size = UDim2.fromOffset(80, 28),
-            LayoutOrder = -10, Visible = false, AutoButtonColor = false, BackgroundTransparency = 0.92,
-            ThemeTag = { BackgroundColor3 = "Accent" }, Parent = Parent,
+            Name = "UndoChanges", Text = "", Size = UDim2.fromScale(1, 1),
+            AutoButtonColor = false, BackgroundTransparency = 1,
+            ThemeTag = { BackgroundColor3 = "ElementBackground" }, Parent = self.UndoGroup,
         }, {
-            Creator.New("UICorner", { CornerRadius = UDim.new(0, 5) }),
-            Creator.New("UIStroke", { Thickness = 1, Transparency = 0.82, ThemeTag = { Color = "Accent" } }),
+            Creator.New("UICorner", { CornerRadius = UDim.new(0, 5) }), self.UndoBorder,
         })
         local Icon = Creator.Icon("lucide:undo-2") or {
             a.b()["undo-2"], { ImageRectSize = Vector2.new(0, 0), ImageRectPosition = Vector2.new(0, 0) },
         }
-        Creator.New("ImageLabel", {
+        self.UndoIcon = Creator.New("ImageLabel", {
             Image = Icon[1], ImageRectSize = Icon[2].ImageRectSize, ImageRectOffset = Icon[2].ImageRectPosition,
             Size = UDim2.fromOffset(12, 12), Position = UDim2.new(0, 9, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundTransparency = 1, ThemeTag = { ImageColor3 = "Accent" }, Parent = self.UndoButton,
+            BackgroundTransparency = 1, ImageTransparency = 0.15,
+            ThemeTag = { ImageColor3 = "Text" }, Parent = self.UndoButton,
         })
         self.UndoText = Creator.New("TextLabel", {
-            Text = "Undo", Size = UDim2.new(1, -32, 1, 0), Position = UDim2.fromOffset(27, 0), TextSize = 12,
-            TextXAlignment = "Left", BackgroundTransparency = 1, FontFace = Font.new(Creator.Font, Enum.FontWeight.Medium),
-            ThemeTag = { TextColor3 = "Accent" }, Parent = self.UndoButton,
+            Text = "Undo", Size = UDim2.new(0, 40, 1, 0), Position = UDim2.fromOffset(27, 0), TextSize = 12,
+            TextXAlignment = "Left", BackgroundTransparency = 1, TextTransparency = 0.15,
+            FontFace = Font.new(Creator.Font, Enum.FontWeight.Regular),
+            ThemeTag = { TextColor3 = "Text" }, Parent = self.UndoButton,
         })
-        Creator.AddSignal(self.UndoButton.MouseEnter, function() self.UndoButton.BackgroundTransparency = 0.84 end)
-        Creator.AddSignal(self.UndoButton.MouseLeave, function() self.UndoButton.BackgroundTransparency = 0.92 end)
-        Creator.AddSignal(self.UndoButton.Activated, function() self:UndoRecent() end)
+        self.UndoCount = Creator.New("TextLabel", {
+            Name = "Count", Text = "", TextSize = 10, Visible = false,
+            Size = UDim2.fromOffset(18, 18), Position = UDim2.new(1, -7, 0.5, 0), AnchorPoint = Vector2.new(1, 0.5),
+            BackgroundTransparency = 0.88, FontFace = Font.new(Creator.Font, Enum.FontWeight.Medium),
+            ThemeTag = { TextColor3 = "Placeholder", BackgroundColor3 = "ElementBackground" }, Parent = self.UndoButton,
+        }, { Creator.New("UICorner", { CornerRadius = UDim.new(0, 4) }) })
+        Creator.AddSignal(self.UndoButton.MouseEnter, function()
+            if not self.Recent then return end
+            self.UndoButton.BackgroundTransparency = 0.9
+            self.UndoBorder.Transparency = 0.72
+        end)
+        Creator.AddSignal(self.UndoButton.MouseLeave, function()
+            self.UndoButton.BackgroundTransparency = 1
+            self.UndoBorder.Transparency = 0.88
+        end)
+        Creator.AddSignal(self.UndoButton.Activated, function() if self.Recent then self:UndoRecent() end end)
     end
     function History:ShowRecent()
         local Recent = self.Recent
@@ -38606,10 +38666,23 @@ function Settings.Setup(Window)
         Recent.Entries, Recent.Count = Entries, Count
         if Count == 0 then self:HideRecent(); return end
         self:EnsureUndoButton()
-        self.UndoText.Text = Count == 1 and "Undo" or "Undo (" .. Count .. ")"
-        local Width = math.max(self.UndoText.TextBounds.X, #self.UndoText.Text * 7)
-        self.UndoButton.Size = UDim2.fromOffset(math.clamp(math.ceil(Width) + 38, 80, 138), 28)
-        self.UndoButton.Visible = true
+        self.UndoCount.Text = tostring(Count)
+        self.UndoCount.Visible = Count > 1
+        local BadgeWidth = math.clamp(#self.UndoCount.Text * 6 + 10, 18, 40)
+        self.UndoCount.Size = UDim2.fromOffset(BadgeWidth, 18)
+        self.UndoGroup.Size = UDim2.fromOffset(76 + (Count > 1 and BadgeWidth + 2 or 0), 28)
+        local Reveal = not self.UndoGroup.Visible or self.UndoHiding
+        if Reveal then
+            self:StopUndoFade()
+            self.UndoHiding = false
+            self.UndoButton.BackgroundTransparency = 1
+            self.UndoBorder.Transparency = 0.88
+        end
+        self.UndoGroup.Visible, self.UndoButton.Active = true, true
+        if Reveal then
+            self.UndoFade = Creator.Tween(self.UndoGroup, 0.16, { GroupTransparency = 0 }, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            self.UndoFade:Play()
+        end
     end
     function History:RecentChanged(Entry)
         if not self.Recent or time() >= self.Recent.Expires then self:HideRecent(); self.Recent = { Entries = {} } end
@@ -38621,7 +38694,7 @@ function Settings.Setup(Window)
         local Token = self.RecentToken
         if self.RecentTimer then pcall(task.cancel, self.RecentTimer) end
         self.RecentTimer = task.delay(self.RecentSeconds, function()
-            if not Window.Destroyed and self.RecentToken == Token then self:HideRecent() end
+            if not Window.Destroyed and self.RecentToken == Token then self.RecentTimer = nil; self:HideRecent() end
         end)
     end
     function History:UndoRecent()
@@ -38836,7 +38909,7 @@ function Settings.Setup(Window)
     Creator.AddSignal(Window.UIElements.Main.Destroying, function()
         Began:Disconnect(); Ended:Disconnect(); Focus:Disconnect()
         History:CloseMenu()
-        History:HideRecent()
+        History:HideRecent(true)
         table.clear(History.ActionOwners)
         table.clear(History.Entries); table.clear(History.States)
     end)
