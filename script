@@ -1,5 +1,5 @@
 --[[
-WindUI Fluent skin: customization build 26
+WindUI Fluent skin: customization build 27
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
@@ -17,8 +17,8 @@ Modifier keybinds, conflict warnings, current-tab filtering and panel position r
 Config autoload, unique names, renaming, duplication and favorites; per-setting reset and bounded undo.
 Wider sidebar with top-right role and optional partial name masking.
 Generated config-name families preserve literal names; synchronized keybind filter and accent separator.
-Six-second grouped Undo controls and a smooth hollow border-glow texture with cached local loading.
-Supported filter icon and bundled fallbacks for keybind-header and Undo icons.
+Six-second grouped topbar Undo, shared soft border glow, filtered binding clearing and config stars.
+Selectable dropdowns without callbacks, inline config pins, delete-all configs and a whole-UI shortcut.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
 MIT License
@@ -29152,6 +29152,18 @@ function ConfigManager:AllConfigs()
     return names
 end
 
+function ConfigManager:DeleteAllConfigs()
+    if type(delfile) ~= "function" then return false, "delfile is unavailable" end
+    local names, message = self:AllConfigs()
+    if message then return false, message end
+    local deleted, failures = 0, {}
+    for _, name in ipairs(names) do
+        local ok, failure = self:DeleteConfig(name)
+        if ok then deleted += 1 else table.insert(failures, name .. ": " .. tostring(failure)) end
+    end
+    return deleted, #failures > 0 and failures or nil
+end
+
 function ConfigManager:Unregister(flag, element)
     if self.Window.PendingFlags[flag] == element then self.Window.PendingFlags[flag] = nil end
     for _, config in pairs(self.Configs) do
@@ -29333,7 +29345,7 @@ function ConfigManager:BuildTab(tab, options)
         input:Set(value)
         updatingName = false
     end
-    local saved, favorites, autoload, pin
+    local saved, autoload, deleteAll
     local refresh
     local function choose(value)
         if refreshing or type(value) ~= "string" or value == "" then return end
@@ -29341,8 +29353,16 @@ function ConfigManager:BuildTab(tab, options)
         showName(value)
         refresh()
     end
-    saved = tab:Dropdown({ Title = "Saved configs", Values = {}, Placeholder = "...", AllowNone = true, SearchBarEnabled = true, History = false, Callback = choose })
-    favorites = tab:Dropdown({ Title = "Favourite configs", Values = {}, Placeholder = "...", AllowNone = true, History = false, Callback = choose })
+    saved = tab:Dropdown({
+        Title = "Saved configs", Values = {}, Placeholder = "...", AllowNone = true,
+        SearchBarEnabled = true, History = false, Callback = choose,
+        IsPinned = function(value) return manager:IsFavorite(value) end,
+        OnPinChanged = function(value, pinned)
+            local ok, message = manager:SetFavorite(value, pinned)
+            refresh()
+            status:SetDesc(ok and (pinned and "Pinned " or "Unpinned ") .. value .. "." or tostring(message))
+        end,
+    })
     autoload = tab:Dropdown({
         Title = "Auto-load config", Values = { "Disabled (no config)" }, Value = manager:GetAutoLoad() or "Disabled (no config)", History = false,
         Callback = function(value)
@@ -29352,35 +29372,22 @@ function ConfigManager:BuildTab(tab, options)
             refresh()
         end,
     })
-    pin = tab:Toggle({
-        Title = "Pin selected config", Value = false, History = false,
-        Callback = function(value)
-            if refreshing then return end
-            local target = selected or name
-            local ok, message = manager:SetFavorite(target, value)
-            status:SetDesc(ok and (value and "Pinned " or "Unpinned ") .. target .. "." or tostring(message))
-            refresh()
-        end,
-    })
     refresh = function()
         if refreshing then return end
         refreshing = true
         local names, message = manager:AllConfigs()
-        local preferred = manager:GetFavorites()
         table.sort(names, function(left, right)
             local leftPinned, rightPinned = manager:IsFavorite(left), manager:IsFavorite(right)
             if leftPinned ~= rightPinned then return leftPinned end
             return left < right
         end)
+        if selected and not table.find(names, selected) then selected = nil end
         saved:Refresh(names)
-        saved:Select(selected and table.find(names, selected) and selected or nil)
-        favorites:Refresh(preferred)
-        favorites:Select(selected and table.find(preferred, selected) and selected or nil)
+        saved:Select(selected)
         local choices = { "Disabled (no config)" }
         for _, configName in ipairs(names) do table.insert(choices, configName) end
         autoload:Refresh(choices)
         autoload:Select(manager:GetAutoLoad() or "Disabled (no config)")
-        pin:Set(manager:IsFavorite(selected or name))
         refreshing = false
         if message then status:SetDesc(message) end
         return names
@@ -29438,6 +29445,29 @@ function ConfigManager:BuildTab(tab, options)
             }):Open()
         end,
     })
+    deleteAll = tab:Button({
+        Title = "Delete all configs", Icon = "lucide:trash-2",
+        Locked = type(delfile) ~= "function" or type(listfiles) ~= "function",
+        LockedTitle = "File listing and deletion required", History = false,
+        Callback = function()
+            local names, failure = manager:AllConfigs()
+            if failure then status:SetDesc(failure); return end
+            if #names == 0 then status:SetDesc("No saved configs to delete."); return end
+            window:Dialog({
+                Title = "Delete all configs", Content = "Delete all " .. #names .. " saved configs? This cannot be undone.",
+                Buttons = {
+                    { Title = "Cancel", Variant = "Secondary", Callback = function() end },
+                    { Title = "Delete all", Variant = "Primary", Callback = function()
+                        local count, errors = manager:DeleteAllConfigs()
+                        refresh()
+                        if count == false then status:SetDesc(tostring(errors))
+                        elseif errors then status:SetDesc("Deleted " .. count .. " configs. " .. table.concat(errors, "; "))
+                        else status:SetDesc("Deleted all " .. count .. " configs.") end
+                    end },
+                },
+            }):Open()
+        end,
+    })
     refreshing = false
     refresh()
     if not manager._AutoLoadStarted then
@@ -29451,7 +29481,7 @@ function ConfigManager:BuildTab(tab, options)
             status:SetDesc(result ~= false and "Auto-loaded " .. target .. "." or "Auto-load failed: " .. tostring(message))
         end)
     end
-    return { Refresh = refresh, Status = status, Name = input, List = saved, Favorites = favorites, AutoLoad = autoload, Pin = pin }
+    return { Refresh = refresh, Status = status, Name = input, List = saved, AutoLoad = autoload, DeleteAll = deleteAll }
 end
 
 return ConfigManager
@@ -29535,7 +29565,7 @@ end
 
 local function CreateGlow(ac,ad,ae,af,ag,ah)
 local ai={Config=ad,Kind=ae,Active=ag~=false,Layers={}}
-local aj=ae=="Window"and 18 or 6
+local aj=18
 ah=ah or UDim.new(1,0)
 function ai.Refresh(ak)
 local al=ae=="Window"and ac.Appearance.Glow or ak.Config.Glow
@@ -29549,7 +29579,7 @@ AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
 BackgroundTransparency=1,Active=false,ClipsDescendants=false,
 ZIndex=math.max(af.ZIndex or 1,1),Parent=af,
 },{aa.New("UICorner",{CornerRadius=ah})})
-local Asset=ae=="Window"and GetGlowAsset()
+local Asset=GetGlowAsset()
 if Asset then
 ak.Texture=aa.New("ImageLabel",{Name="SoftBorderGlow",Image=Asset,ScaleType="Slice",SliceCenter=Rect.new(29,29,99,99),
 AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),BackgroundTransparency=1,
@@ -29571,14 +29601,14 @@ if ak.Texture then
 ak.Texture.Size=UDim2.new(1,am.Size*2,1,am.Size*2)
 ak.Texture.SliceScale=am.Size/20
 ak.Texture.ImageTransparency=am.Transparency
-aa.SetThemeTag(ak.Texture,{ImageColor3=am.Color or ab.Tag(ac,ad,"Accent")})
+aa.SetThemeTag(ak.Texture,{ImageColor3=am.Color or ab.Tag(ac,ad,ae=="Window"and"Accent"or ae)})
 end
 for an,ao in ipairs(ak.Layers)do
 local Distance=(an-1)/aj
 ao.Stroke.BorderOffset=UDim.new(0,Distance*am.Size)
-ao.Stroke.Thickness=am.Size/aj+(ae=="Window"and 0.4 or 0.25)
-local Falloff=ae=="Window"and math.exp(-4.5*Distance*Distance)or(1-Distance)^2
-ao.Stroke.Transparency=1-(1-am.Transparency)*Falloff*(ae=="Window"and 0.65 or 1)
+ao.Stroke.Thickness=am.Size/aj+0.4
+local Falloff=math.exp(-4.5*Distance*Distance)
+ao.Stroke.Transparency=1-(1-am.Transparency)*Falloff*0.65
 aa.SetThemeTag(ao.Stroke,{Color=am.Color or ab.Tag(ac,ad,ae=="Window"and"Accent"or ae)})
 end
 end
@@ -30238,6 +30268,14 @@ if not CanChange(Record)or af.Destroyed then return false end
 Record:Set("None")
 return true
 end
+function ag.IsVisibleRecord(Self,Record)
+if Record==Self.VisibilityBind then return true end
+if Record.Options.ShowInList==false then return false end
+local Tab=Record.Owner.Tab
+return(Self.ListOptions.CurrentTabOnly~=true or not Tab or Tab.Index==af.CurrentTab)
+and(Record.Value~="None"or Self.ListOptions.ShowUnbound==true)
+and(Self.ListOptions.OnlyActive~=true or Record.Owner.Value==true)
+end
 function ag.ClearBindings(Self,IncludePanelToggle)
 local Count=0
 local function Clear()
@@ -30246,7 +30284,8 @@ Self.Picking,Self.PickModifier=nil,nil
 if Picking then Picking:Refresh()end
 Self.Batch+=1
 for _,Record in ipairs(Self.Records)do
-if(IncludePanelToggle or Record~=Self.VisibilityBind)and Record.Value~="None"and CanChange(Record)then Record:Set("None");Count+=1 end
+local InScope=Record==Self.VisibilityBind and IncludePanelToggle or Record~=Self.VisibilityBind and Self:IsVisibleRecord(Record)
+if InScope and Record.Value~="None"and CanChange(Record)then Record:Set("None");Count+=1 end
 end
 Self.Batch-=1
 Self:CheckConflicts()
@@ -30276,12 +30315,10 @@ ah.VisibilityRow.Size=UDim2.new(1,-20,0,ai)
 ah.VisibilityRow.Position=UDim2.fromOffset(10,aj+4)
 end
 for al,am in ipairs(ah.Records)do
-if am~=ah.VisibilityBind and am.Value~="None"and CanChange(am)then HasControlKeys=true end
-if am.Options.ShowInList==false then continue end
-local Tab=am.Owner.Tab
-local InTab=ah.ListOptions.CurrentTabOnly~=true or not Tab or Tab.Index==af.CurrentTab
-local an=InTab and(am.Value~="None"or ah.ListOptions.ShowUnbound==true)
-and(ah.ListOptions.OnlyActive~=true or am.Owner.Value==true)
+if am==ah.VisibilityBind then continue end
+local an=ah:IsVisibleRecord(am)
+if an and am.Value~="None"and CanChange(am)then HasControlKeys=true end
+if am.Options.ShowInList==false then if am.Row then am.Row.Visible=false end;continue end
 if not am.Row then
 am.Row=aa.New("Frame",{Size=UDim2.new(1,-20,0,22),Position=UDim2.fromOffset(10,0),BackgroundTransparency=1,Parent=ah.List})
 am.RowTitle=aa.New("TextLabel",{Size=UDim2.new(1,-78,1,0),TextSize=12,TextXAlignment="Left",TextTruncate="AtEnd",BackgroundTransparency=1,RichText=false,
@@ -30338,7 +30375,7 @@ local Icon=aa.Icon("lucide:eraser")or{a.b().eraser,{ImageRectSize=Vector2.new(0,
 ah.ClearIcon=aa.New("ImageLabel",{Image=Icon[1],ImageRectSize=Icon[2].ImageRectSize,ImageRectOffset=Icon[2].ImageRectPosition,
 Size=UDim2.fromOffset(13,13),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=1,
 ThemeTag={ImageColor3="Placeholder"},Parent=ah.ClearAll})
-local Hint=aa.New("TextLabel",{Name="ClearHint",Text="Clear bindings",TextSize=11,Size=UDim2.fromOffset(100,22),
+local Hint=aa.New("TextLabel",{Name="ClearHint",Text="Clear visible bindings",TextSize=11,Size=UDim2.fromOffset(138,22),
 Position=UDim2.new(1,-8,0,-26),AnchorPoint=Vector2.new(1,0),BackgroundTransparency=0.05,Visible=false,
 FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),ThemeTag={TextColor3="Text",BackgroundColor3="Dialog"},Parent=ag.List},
 {aa.New("UICorner",{CornerRadius=UDim.new(0,4)})})
@@ -30360,22 +30397,22 @@ if Input.UserInputType==Enum.UserInputType.MouseButton1 or Input.UserInputType==
 end)
 aa.AddSignal(ah.FilterButton.Activated,function()af:SetKeybindListCurrentTabOnly(not ah.ListOptions.CurrentTabOnly)end)
 aa.AddSignal(ah.FilterButton.MouseEnter,function()Hint.Text=ah.ListOptions.CurrentTabOnly and"Current tab"or"All tabs";Hint.Visible=true end)
-aa.AddSignal(ah.FilterButton.MouseLeave,function()Hint.Visible=false;Hint.Text="Clear bindings"end)
+aa.AddSignal(ah.FilterButton.MouseLeave,function()Hint.Visible=false;Hint.Text="Clear visible bindings"end)
 ah.Line=aa.New("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.fromOffset(0,28),BackgroundTransparency=0.2,ThemeTag={BackgroundColor3="Accent"},Parent=ag.List})
 if ai.Draggable~=false then ah.Drag=aa.Drag(ag.List,{ah.Header})end
-ah.VisibilityRow=aa.New("Frame",{Name="KeybindListToggle",Size=UDim2.new(1,-20,0,26),
+ah.VisibilityRow=aa.New("Frame",{Name="UIToggle",Size=UDim2.new(1,-20,0,26),
 Position=UDim2.fromOffset(10,32),Visible=true,BackgroundTransparency=1,Parent=ah.List})
-ah.VisibilityTitle=aa.New("TextLabel",{Text="Keybind ui toggle",Size=UDim2.new(1,-46,1,0),
+ah.VisibilityTitle=aa.New("TextLabel",{Text="UI",Size=UDim2.new(1,-46,1,0),
 TextSize=12,TextXAlignment="Left",TextTruncate="AtEnd",RichText=false,BackgroundTransparency=1,
 FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),ThemeTag={TextColor3="Placeholder"},Parent=ah.VisibilityRow})
-local Owner={Title="Keybind ui toggle",__type="Button"}
+local Owner={Title="UI",__type="Button"}
 ah.VisibilityBind=ac.Attach(af,Owner,ah.VisibilityRow,{
 Key=ai.ToggleKey or"None",ShowInList=false,
 Changed=function(ak)
 ai.ToggleKey=ak
 if ai.ToggleKeyChanged then aa.SafeCallback(ai.ToggleKeyChanged,ak)end
 end,
-},function()af:ToggleKeybindList()end,nil,function(ak)
+},function()af:Toggle()end,nil,function(ak)
 ah.VisibilityTitle.Size=UDim2.new(1,-ak-30,1,0)
 end)
 ah.VisibilityBind.Button.Position=UDim2.new(1,-22,0.5,0)
@@ -33537,12 +33574,19 @@ function aa.New(am,an,ao,ap)
 local aq={}
 local ar=0
 
-if not an.Callback then
-ap="Menu"
+ap=ap or"Dropdown"
+if an.Multi then
+if an.Value==nil then an.Value={}
+elseif type(an.Value)~="table"or an.Value.Title then an.Value={an.Value}end
 end
+an.UIElements.MenuLayer=aj("Frame",{
+Name="DropdownLayer",Size=UDim2.fromScale(1,1),BackgroundTransparency=1,
+Active=false,Parent=am.WindUI.DropdownGui,
+})
 
 an.UIElements.UIListLayout=aj("UIListLayout",{
 Padding=UDim.new(0,2),
+SortOrder="LayoutOrder",
 FillDirection="Vertical",
 HorizontalAlignment="Center",
 })
@@ -33568,7 +33612,7 @@ Padding=UDim.new(0,ao.MenuPadding),
 }),
 aj("Frame",{
 BackgroundTransparency=1,
-Size=UDim2.new(1,0,1,an.SearchBarEnabled and-ao.MenuPadding-ao.SearchBarHeight),
+Size=UDim2.new(1,0,1,an.SearchBarEnabled and(-ao.MenuPadding-ao.SearchBarHeight)or 0),
 
 ClipsDescendants=true,
 LayoutOrder=999,
@@ -33598,7 +33642,7 @@ Position=UDim2.new(-10,0,-10,0),
 Visible=false,
 Active=false,
 
-Parent=am.WindUI.DropdownGui,
+Parent=an.UIElements.MenuLayer,
 AnchorPoint=Vector2.new(0,0),
 },{
 an.UIElements.Menu,
@@ -33616,7 +33660,7 @@ end
 local function RecalculateListSize()
 local as=math.max(math.min(am.WindUI.DropdownGui.AbsoluteSize.Y-16,350),32)
 
-local at=an.UIElements.UIListLayout.AbsoluteContentSize.Y/am.UIScale
+local at=an.UIElements.UIListLayout.AbsoluteContentSize.Y
 local au=an.SearchBarEnabled and(ao.SearchBarHeight+(ao.MenuPadding*3))
 or(ao.MenuPadding*2)
 local av=at+au
@@ -33635,8 +33679,8 @@ local as=an.UIElements.Dropdown or an.DropdownFrame.UIElements.Main
 local at=an.UIElements.MenuCanvas
 local au=math.max(at.AbsoluteSize.X,at.Size.X.Offset)
 local av=math.max(at.AbsoluteSize.Y,at.Size.Y.Offset)
-local aw=am.WindUI.DropdownGui.AbsoluteSize
-local ax=am.WindUI.DropdownGui.AbsolutePosition
+local aw=an.UIElements.MenuLayer.AbsoluteSize
+local ax=an.UIElements.MenuLayer.AbsolutePosition
 local ay=as.AbsolutePosition.X-ax.X+as.AbsoluteSize.X-au
 local az=as.AbsolutePosition.Y-ax.Y+as.AbsoluteSize.Y+4
 if az+av>aw.Y-8 then az=as.AbsolutePosition.Y-ax.Y-av-4 end
@@ -33682,25 +33726,37 @@ an.UIElements.Dropdown.Frame.Frame.TextLabel.Text=(av==""and(an.Placeholder or".
 end
 end
 
-local function Callback(at)
+local LastSelection
+local SelectionInitialized=false
+local function SelectionKey(Value)
+return typeof(Value)=="table"and Value.Title or Value
+end
+local function SameSelection(Left,Right)
+if type(Left)~=type(Right)then return false end
+if type(Left)~="table"then return Left==Right end
+if #Left~=#Right then return false end
+for Index,Value in ipairs(Left)do if Value~=Right[Index]then return false end end
+return true
+end
+local function Callback(Action)
 aq:Display()
-if an.Locked then
+if an.Locked then return end
+if ap=="Menu"then
+if Action then task.spawn(function()if not am.Window.Destroyed then ai.SafeCallback(Action)end end)end
 return
 end
-
+local Selection=SelectionKey(an.Value)
+if an.Multi then
+Selection={}
+for Index,Value in ipairs(an.Value)do Selection[Index]=SelectionKey(Value)end
+end
+if SelectionInitialized and SameSelection(Selection,LastSelection)then return end
+LastSelection,SelectionInitialized=Selection,true
+if am.Window._SettingHistory then am.Window._SettingHistory:Commit(an)end
 if an.Callback then
+local Value=an.Multi and table.clone(an.Value)or an.Value
 task.spawn(function()
-if an.Locked then
-return
-end
-ai.SafeCallback(an.Callback,an.Value)
-end)
-else
-task.spawn(function()
-if an.Locked then
-return
-end
-ai.SafeCallback(at)
+if not an.Locked and not am.Window.Destroyed then ai.SafeCallback(an.Callback,Value)end
 end)
 end
 end
@@ -33765,9 +33821,9 @@ end
 end
 
 function aq.Refresh(at,au)
-if am.Window.Destroyed then
-return
-end
+if am.Window.Destroyed then return end
+au=au or{}
+an.Values=au
 
 for av,aw in next,an.UIElements.Menu.Frame.ScrollingFrame:GetChildren()do
 if not aw:IsA"UIListLayout"then
@@ -33829,6 +33885,7 @@ ThemeTag={
 ImageColor3="DropdownTabBackground",
 },
 Active=not ax.Locked,
+LayoutOrder=tonumber(av)or 0,
 },
 {
 ai.NewRoundFrame(ao.MenuCorner-ao.MenuPadding,"Glass-1.4",{
@@ -33977,6 +34034,26 @@ Name="Selector",Size=UDim2.fromOffset(3,14),Position=UDim2.new(0,0,0.5,0),
 AnchorPoint=Vector2.new(0,0.5),Visible=ax.Selected and not ax.Locked,
 ThemeTag={BackgroundColor3="Accent"},Parent=ax.UIElements.TabItem,
 },{aj("UICorner",{CornerRadius=UDim.new(0,2)})})
+if type(an.OnPinChanged)=="function"then
+local Pinned=type(an.IsPinned)=="function"and an.IsPinned(ax.Original)==true
+ax.UIElements.TabItem.Frame.Size=UDim2.new(1,-30,1,0)
+local Star=aj("TextButton",{
+Name="PinConfig",Text=Pinned and"★"or"☆",TextSize=20,
+Size=UDim2.fromOffset(28,28),Position=UDim2.new(1,-2,0.5,0),AnchorPoint=Vector2.new(1,0.5),
+AutoButtonColor=false,BackgroundTransparency=1,
+FontFace=Font.new("rbxasset://fonts/families/SourceSansPro.json",Enum.FontWeight.SemiBold),
+ThemeTag={TextColor3=Pinned and Color3.fromRGB(255,209,72)or"Placeholder",BackgroundColor3="ElementBackground"},
+Parent=ax.UIElements.TabItem,
+},{aj("UICorner",{CornerRadius=UDim.new(0,4)})})
+ax.UIElements.Pin=Star
+ai.AddSignal(Star.MouseEnter,function()Star.BackgroundTransparency=0.9 end)
+ai.AddSignal(Star.MouseLeave,function()Star.BackgroundTransparency=1 end)
+ai.AddSignal(Star.Activated,function()
+if an.Locked or ax.Locked then return end
+local IsPinned=type(an.IsPinned)=="function"and an.IsPinned(ax.Original)==true
+ai.SafeCallback(an.OnPinChanged,ax.Original,not IsPinned)
+end)
+end
 if ap=="Dropdown"then
 ai.AddSignal(ax.UIElements.TabItem.MouseEnter,function()
 if not ax.Locked then ak(ax.UIElements.TabItem,0.08,{ImageTransparency=ax.Selected and 0.85 or 0.89}):Play()end
@@ -33989,9 +34066,12 @@ end
 aq:Display()
 
 if ap=="Dropdown"then
-ai.AddSignal(ax.UIElements.TabItem.MouseButton1Click,function()
-if an.Locked or ax.Locked then
-return
+ai.AddSignal(ax.UIElements.TabItem.Activated,function(Input)
+if an.Locked or ax.Locked then return end
+local Pin=ax.UIElements.Pin
+if Pin and Input and Input.Position then
+local Point,Position,Size=Input.Position,Pin.AbsolutePosition,Pin.AbsoluteSize
+if Point.X>=Position.X and Point.X<=Position.X+Size.X and Point.Y>=Position.Y and Point.Y<=Position.Y+Size.Y then return end
 end
 
 if an.Multi then
@@ -34092,31 +34172,61 @@ math.clamp(math.max(an.MenuWidth,an.Width or 150),150,360),
 an.UIElements.MenuCanvas.Size.Y.Scale,
 an.UIElements.MenuCanvas.Size.Y.Offset
 )
+if as then
+local Query=string.lower(as.Frame.Frame.TextBox.Text)
+for _,Item in pairs(an.Tabs)do Item.UIElements.TabItem.Visible=string.find(string.lower(tostring(Item.Name)),Query,1,true)~=nil end
+end
 Callback()
-
-an.Values=au
+RecalculateCanvasSize()
+RecalculateListSize()
+if an.Opened then UpdatePosition()end
 end
 
 aq:Refresh(an.Values)
 
-function aq.Select(at,au)
-if au then
-an.Value=au
-else
+function aq.Select(at,Value)
+local function Resolve(Choice)
+if typeof(Choice)=="number"then return an.Values[Choice]end
+local Key=SelectionKey(Choice)
+for _,Option in ipairs(an.Values)do
+if(type(Option)~="table"or Option.Type~="Divider")and SelectionKey(Option)==Key then return Option end
+end
+end
 if an.Multi then
-an.Value={}
+local Choices=Value or{}
+if type(Choices)~="table"or Choices.Title then Choices={Choices}end
+local Selected,Seen={},{}
+for _,Choice in ipairs(Choices)do
+local Option=Resolve(Choice)
+if Option then
+local Key=SelectionKey(Option)
+if not Seen[Key]then Seen[Key]=true;table.insert(Selected,Option)end
+end
+end
+an.Value=Selected
 else
-an.Value=nil
+if type(Value)=="table"and not Value.Title then Value=Value[1]end
+an.Value=Value~=nil and Resolve(Value)or nil
 end
+for _,Item in pairs(an.Tabs)do
+Item.Selected=false
+if an.Multi then
+for _,Choice in ipairs(an.Value)do if SelectionKey(Choice)==Item.Name then Item.Selected=true;break end end
+else Item.Selected=SelectionKey(an.Value)==Item.Name end
+ak(Item.UIElements.TabItem,0.1,{ImageTransparency=Item.Selected and not Item.Locked and al or 1}):Play()
+ak(Item.UIElements.TabItem.Frame.Title.TextLabel,0.1,{TextTransparency=Item.Locked and 0.6 or Item.Selected and 0 or 0.4}):Play()
 end
-aq:Refresh(an.Values)
+Callback()
 end
 
 RecalculateListSize()
 RecalculateCanvasSize()
 
 function aq.Open(at)
-if an.Locked or am.Window.Destroyed then return end
+if an.Locked or am.Window.Destroyed or am.Window.Closed then return end
+for _,Element in ipairs(am.Window.AllElements or{})do
+if Element~=an and Element.__type=="Dropdown"and Element.Opened then Element:Close()end
+end
 ar+=1
 an.Opened=true
 an.UIElements.Menu.Visible=true
@@ -34135,7 +34245,7 @@ an.Opened=false
 ak(an.UIElements.Menu,0.12,{Size=UDim2.new(1,0,0,0),ImageTransparency=1},Enum.EasingStyle.Quart,Enum.EasingDirection.Out):Play()
 if an.UIElements.DropdownIcon then ak(an.UIElements.DropdownIcon,0.12,{Rotation=0}):Play()end
 task.delay(0.12,function()
-if ar~=au or an.Opened or am.Window.Destroyed then return end
+if ar~=au or an.Opened or am.Window.Destroyed or not an.UIElements.MenuLayer.Parent then return end
 an.UIElements.Menu.Visible=false
 an.UIElements.MenuCanvas.Visible=false
 an.UIElements.MenuCanvas.Active=false
@@ -34203,7 +34313,7 @@ ar+=1
 at:Disconnect()
 au:Disconnect()
 av:Disconnect()
-an.UIElements.MenuCanvas:Destroy()
+an.UIElements.MenuLayer:Destroy()
 end)
 
 return aq
@@ -34254,6 +34364,8 @@ Placeholder=ao.Placeholder or"...",
 SearchBarEnabled=ao.SearchBarEnabled or false,
 Multi=ao.Multi,
 Callback=ao.Callback or nil,
+IsPinned=ao.IsPinned,
+OnPinChanged=ao.OnPinChanged,
 
 UIElements={},
 
@@ -34274,8 +34386,8 @@ ap.DropdownFrame=a.I(){
 Title=ap.Title,
 Desc=ap.Desc,
 Parent=ao.Parent,
-TextOffset=ap.Callback and ap.Width or 20,
-Hover=not ap.Callback and true or false,
+TextOffset=ap.Width,
+Hover=false,
 Tab=ao.Tab,
 Index=ao.Index,
 Window=ao.Window,
@@ -34284,7 +34396,7 @@ ParentConfig=ao,
 Tags=ao.Tags,
 }
 
-if ap.Callback then
+do
 ap.UIElements.Dropdown=
 ai("",nil,ap.DropdownFrame.UIElements.Main,nil,4,true,"Fluent",true)
 
@@ -34305,6 +34417,7 @@ end
 ap.DropdownMenu=ak(ao,ap,am,"Dropdown")
 
 ap.Display=ap.DropdownMenu.Display
+ap.LockValues=ap.DropdownMenu.LockValues
 ap.Refresh=ap.DropdownMenu.Refresh
 ap.Select=ap.DropdownMenu.Select
 ap.Open=ap.DropdownMenu.Open
@@ -38453,25 +38566,17 @@ function Settings.Setup(Window)
         self.RecentToken += 1
         if self.RecentTimer then pcall(task.cancel, self.RecentTimer); self.RecentTimer = nil end
         self.Recent = nil
-        for _, State in pairs(self.States) do if State.Footer then State.Footer.Visible = false end end
+        if self.UndoButton then self.UndoButton.Visible = false end
     end
-    function History:UndoFooter(Element)
-        local State = self.States[Element]
-        if not State or not State.Alive or not State.Container then return end
-        if State.Footer then return State end
-        local Container = State.Container
-        local Layout = Container:FindFirstChildWhichIsA("UIListLayout")
-        if Layout then Layout.SortOrder = "LayoutOrder" end
-        State.Footer = Creator.New("Frame", {
-            Name = "RecentUndo", Size = UDim2.new(1, 0, 0, 22), BackgroundTransparency = 1,
-            LayoutOrder = 10000, Visible = false, Parent = Container,
-        })
-        State.UndoButton = Creator.New("TextButton", {
-            Name = "UndoChanges", Text = "", Size = UDim2.fromOffset(112, 22), Position = UDim2.fromScale(1, 0),
-            AnchorPoint = Vector2.new(1, 0), BackgroundTransparency = 0.94, AutoButtonColor = false,
-            ThemeTag = { BackgroundColor3 = "Accent" }, Parent = State.Footer,
+    function History:EnsureUndoButton()
+        if self.UndoButton then return end
+        local Parent = Window.UIElements.Main.Main.Topbar.Right
+        self.UndoButton = Creator.New("TextButton", {
+            Name = "UndoChanges", Text = "", Size = UDim2.fromOffset(80, 28),
+            LayoutOrder = -10, Visible = false, AutoButtonColor = false, BackgroundTransparency = 0.92,
+            ThemeTag = { BackgroundColor3 = "Accent" }, Parent = Parent,
         }, {
-            Creator.New("UICorner", { CornerRadius = UDim.new(0, 4) }),
+            Creator.New("UICorner", { CornerRadius = UDim.new(0, 5) }),
             Creator.New("UIStroke", { Thickness = 1, Transparency = 0.82, ThemeTag = { Color = "Accent" } }),
         })
         local Icon = Creator.Icon("lucide:undo-2") or {
@@ -38479,49 +38584,32 @@ function Settings.Setup(Window)
         }
         Creator.New("ImageLabel", {
             Image = Icon[1], ImageRectSize = Icon[2].ImageRectSize, ImageRectOffset = Icon[2].ImageRectPosition,
-            Size = UDim2.fromOffset(11, 11), Position = UDim2.new(0, 7, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5),
-            BackgroundTransparency = 1, ImageTransparency = 0.1, ThemeTag = { ImageColor3 = "Accent" }, Parent = State.UndoButton,
+            Size = UDim2.fromOffset(12, 12), Position = UDim2.new(0, 9, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5),
+            BackgroundTransparency = 1, ThemeTag = { ImageColor3 = "Accent" }, Parent = self.UndoButton,
         })
-        State.UndoText = Creator.New("TextLabel", {
-            Text = "Undo change", Size = UDim2.new(1, -28, 1, 0), Position = UDim2.fromOffset(23, 0), TextSize = 11,
-            TextXAlignment = "Left", BackgroundTransparency = 1, FontFace = Font.new(Creator.Font, Enum.FontWeight.Regular),
-            ThemeTag = { TextColor3 = "Accent" }, Parent = State.UndoButton,
+        self.UndoText = Creator.New("TextLabel", {
+            Text = "Undo", Size = UDim2.new(1, -32, 1, 0), Position = UDim2.fromOffset(27, 0), TextSize = 12,
+            TextXAlignment = "Left", BackgroundTransparency = 1, FontFace = Font.new(Creator.Font, Enum.FontWeight.Medium),
+            ThemeTag = { TextColor3 = "Accent" }, Parent = self.UndoButton,
         })
-        local function FitUndo()
-            local Width = math.max(State.UndoText.TextBounds.X, #State.UndoText.Text * State.UndoText.TextSize * 0.62)
-            State.UndoButton.Size = UDim2.fromOffset(math.max(104, math.ceil(Width) + 32), 22)
-        end
-        Creator.AddSignal(State.UndoText:GetPropertyChangedSignal("TextBounds"), FitUndo)
-        State.FitUndo = FitUndo
-        Creator.AddSignal(State.UndoButton.MouseEnter, function() State.UndoButton.BackgroundTransparency = 0.86 end)
-        Creator.AddSignal(State.UndoButton.MouseLeave, function() State.UndoButton.BackgroundTransparency = 0.94 end)
-        Creator.AddSignal(State.UndoButton.Activated, function() self:UndoRecent() end)
-        return State
+        Creator.AddSignal(self.UndoButton.MouseEnter, function() self.UndoButton.BackgroundTransparency = 0.84 end)
+        Creator.AddSignal(self.UndoButton.MouseLeave, function() self.UndoButton.BackgroundTransparency = 0.92 end)
+        Creator.AddSignal(self.UndoButton.Activated, function() self:UndoRecent() end)
     end
     function History:ShowRecent()
         local Recent = self.Recent
         if not Recent then return end
-        local Entries, Elements, Count = {}, {}, 0
+        local Entries, Count = {}, 0
         for _, Entry in ipairs(Recent.Entries) do
-            if table.find(self.Entries, Entry) then
-                table.insert(Entries, Entry)
-                Count += #Entry.Changes
-                for _, Change in ipairs(Entry.Changes) do Elements[Change.Element] = true end
-                if Entry.Action then Elements[Entry.Action] = true end
-            end
+            if table.find(self.Entries, Entry) then table.insert(Entries, Entry); Count += #Entry.Changes end
         end
         Recent.Entries, Recent.Count = Entries, Count
         if Count == 0 then self:HideRecent(); return end
-        for Element, State in pairs(self.States) do
-            if Elements[Element] then
-                State = self:UndoFooter(Element)
-                if State then
-                    State.Footer.Visible = true
-                    State.UndoText.Text = Count == 1 and "Undo change" or "Undo changes x" .. Count
-                    State.FitUndo()
-                end
-            elseif State.Footer then State.Footer.Visible = false end
-        end
+        self:EnsureUndoButton()
+        self.UndoText.Text = Count == 1 and "Undo" or "Undo (" .. Count .. ")"
+        local Width = math.max(self.UndoText.TextBounds.X, #self.UndoText.Text * 7)
+        self.UndoButton.Size = UDim2.fromOffset(math.clamp(math.ceil(Width) + 38, 80, 138), 28)
+        self.UndoButton.Visible = true
     end
     function History:RecentChanged(Entry)
         if not self.Recent or time() >= self.Recent.Expires then self:HideRecent(); self.Recent = { Entries = {} } end
@@ -38689,9 +38777,6 @@ function Settings.Setup(Window)
         if Options.History == false or not Supported[Element.__type] or self.States[Element] then return end
         local State = { Initial = Snapshot(Element), Last = Snapshot(Element), Alive = true }
         self.States[Element] = State
-        for Key, Frame in pairs(Element) do
-            if typeof(Frame) == "table" and type(Key) == "string" and Key ~= "ElementFrame" and Key:match("Frame$") and Frame.UIElements and Frame.UIElements.Container then State.Container = Frame.UIElements.Container; break end
-        end
         local function Wrap(Object, Method)
             local Original = Object and Object[Method]
             if type(Original) ~= "function" then return end
@@ -39618,7 +39703,13 @@ a.E()
 .New(au,at.StatsBar)
 function au.RefreshAuxiliaryUI(x)
 x:_ReflowSidebar()
-if x.Closed or x.Destroyed then x:_StopSideBarDrag();if x._SettingHistory then x._SettingHistory:CloseMenu()end end
+if x.Closed or x.Destroyed then
+x:_StopSideBarDrag()
+if x._SettingHistory then x._SettingHistory:CloseMenu()end
+for _,Element in ipairs(x.AllElements)do
+if Element.__type=="Dropdown"and Element.Opened then Element:Close()end
+end
+end
 if x._KeybindRouter then x._KeybindRouter:RefreshVisibility()end
 x.StatsBar:RefreshVisibility()
 x:_RefreshAppearanceVisibility()
