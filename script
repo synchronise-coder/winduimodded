@@ -1,5 +1,5 @@
 --[[
-WindUI Fluent skin: customization build 23
+WindUI Fluent skin: customization build 24
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
@@ -13,7 +13,9 @@ Interface toggles can synchronize the keybind panel directly with Keybind = "UI"
 Hidden tabs, a draggable sidebar divider and font-measured, wrapping profile names.
 Centered hover-only sidebar divider, compact default width and manual resizing that keeps profile names wrapped.
 SelectTab is available automatically after creating the window and accepts tab objects.
-Keybind clear actions, code-defined default-size reset and configurable dropdown placeholders.
+Modifier keybinds, conflict warnings, current-tab filtering and panel position reset.
+Config autoload, unique names, renaming, duplication and favorites; per-setting reset and bounded undo.
+Wider sidebar with top-right role, optional partial name masking and softer exterior glow.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
 MIT License
@@ -28831,6 +28833,7 @@ function Tag:New(TagConfig, Parent)
 end
 
 return Tag end function a.A():typeof(__modImpl())local aa=a.cache.A if not aa then aa={c=__modImpl()}a.cache.A=aa end return aa.c end end do local function __modImpl()
+
 local clone = cloneref or clonereference or function(value) return value end
 local HttpService = clone(game:GetService("HttpService"))
 
@@ -28943,6 +28946,17 @@ function ConfigManager:SetPath(path)
     local ok, err = ensureFolder(path)
     if not ok then return false, err end
     self.Path = path
+    self.PreferencesPath = path .. "preferences.meta.json"
+    self.Preferences = { favorites = {} }
+    local success, preferences = pcall(function() return HttpService:JSONDecode(readfile(self.PreferencesPath)) end)
+    if success and type(preferences) == "table" then
+        if type(preferences.autoLoad) == "string" and configName(preferences.autoLoad) then self.Preferences.autoLoad = preferences.autoLoad end
+        if type(preferences.favorites) == "table" then
+            for _, name in ipairs(preferences.favorites) do
+                if type(name) == "string" and configName(name) and not table.find(self.Preferences.favorites, name) then table.insert(self.Preferences.favorites, name) end
+            end
+        end
+    end
     for name, config in pairs(self.Configs) do config.Path = path .. name .. ".json" end
     return true
 end
@@ -28953,17 +28967,22 @@ function ConfigManager:CreateConfig(name, autoload)
     if not name then return false, err end
     if self.Configs[name] then
         local config = self.Configs[name]
-        if autoload ~= nil then config:SetAutoLoad(autoload) end
+        if autoload ~= nil then config.AutoLoad = autoload == true end
         config:SetAsCurrent()
         return config
     end
     local manager, window = self, self.Window
-    local config = { Name = name, Path = self.Path .. name .. ".json", Elements = {}, CustomData = {}, AutoLoad = autoload == true, Version = 1.3 }
+    local config = { Name = name, Path = self.Path .. name .. ".json", Elements = {}, CustomData = {}, AutoLoad = autoload == true or self:GetAutoLoad() == name, Version = 1.4 }
     function config:SetAsCurrent() window:SetCurrentConfig(self); return self end
     function config:Register(flag, element) self.Elements[flag] = element; return self end
     function config:Set(key, value) self.CustomData[key] = value; return self end
     function config:Get(key) return self.CustomData[key] end
-    function config:SetAutoLoad(value) self.AutoLoad = value == true; return self end
+    function config:SetAutoLoad(value)
+        self.AutoLoad = value == true
+        if self.AutoLoad and manager:Exists(self.Name) then manager:SetAutoLoad(self.Name)
+        elseif not self.AutoLoad and manager:GetAutoLoad() == self.Name then manager:SetAutoLoad(nil) end
+        return self
+    end
     function config:GetData() return { elements = self.Elements, custom = self.CustomData, autoload = self.AutoLoad } end
     local function registerFlags()
         for flag, element in pairs(window.PendingFlags or {}) do config:Register(flag, element) end
@@ -28980,16 +28999,17 @@ function ConfigManager:CreateConfig(name, autoload)
             local router = window._KeybindRouter
             local key = router and router.VisibilityBind and router.VisibilityBind.Value
                 or (type(window.KeybindList) == "table" and window.KeybindList.ToggleKey)
-            saved.__window = { keybindListKey = key, keybindListVisible = window._KeybindListVisible, transparent = window.Transparent, sidebarWidth = window._SideBarRequestedWidth or window.SideBarWidth, sidebarGap = window.SideBarGap }
+            saved.__window = { keybindListKey = key, keybindListVisible = window._KeybindListVisible, keybindListCurrentTabOnly = router and router.ListOptions.CurrentTabOnly == true, transparent = window.Transparent, sidebarWidth = window._SideBarRequestedWidth or window.SideBarWidth, sidebarGap = window.SideBarGap }
             if window.GetUIScale then saved.__window.scale = window:GetUIScale() end
             local written, message = writefile(self.Path, HttpService:JSONEncode(saved))
             if written == false then error(message or "writefile failed") end
+            if self.AutoLoad then manager:SetAutoLoad(self.Name) end
             return saved
         end)
         if not ok then return false, "Could not save config: " .. tostring(data) end
         return data
     end
-    function config:Load()
+    function config:_Load()
         if type(readfile) ~= "function" then return false, "readfile is unavailable" end
         if type(isfile) == "function" then
             local ok, exists = pcall(isfile, self.Path)
@@ -29007,6 +29027,7 @@ function ConfigManager:CreateConfig(name, autoload)
         if type(appearance) ~= "table"
             or (appearance.keybindListKey ~= nil and type(appearance.keybindListKey) ~= "string")
             or (appearance.keybindListVisible ~= nil and type(appearance.keybindListVisible) ~= "boolean")
+            or (appearance.keybindListCurrentTabOnly ~= nil and type(appearance.keybindListCurrentTabOnly) ~= "boolean")
             or (appearance.transparent ~= nil and type(appearance.transparent) ~= "boolean")
             or (appearance.scale ~= nil and (not finite(appearance.scale) or appearance.scale <= 0)) then
             return false, "Invalid window settings"
@@ -29038,6 +29059,7 @@ function ConfigManager:CreateConfig(name, autoload)
         local success, message = pcall(function()
             if appearance.keybindListKey and window.SetKeybindListKey then window:SetKeybindListKey(appearance.keybindListKey) end
             if appearance.keybindListVisible ~= nil and window.SetKeybindListVisible then window:SetKeybindListVisible(appearance.keybindListVisible) end
+            if appearance.keybindListCurrentTabOnly ~= nil and window.SetKeybindListCurrentTabOnly then window:SetKeybindListCurrentTabOnly(appearance.keybindListCurrentTabOnly) end
             if type(appearance.sidebarWidth) == "number" and window.SetSideBarWidth then window:SetSideBarWidth(appearance.sidebarWidth) end
             if type(appearance.sidebarGap) == "number" and window.SetSideBarGap then window:SetSideBarGap(appearance.sidebarGap) end
             if appearance.transparent ~= nil and window.ToggleTransparency then window:ToggleTransparency(appearance.transparent) end
@@ -29045,6 +29067,16 @@ function ConfigManager:CreateConfig(name, autoload)
         end)
         if not success then return false, "Could not restore window: " .. tostring(message) end
         return self.CustomData
+    end
+    function config:Load()
+        local history, router = window._SettingHistory, window._KeybindRouter
+        if history then history.Suspended += 1 end
+        if router then router.Batch += 1 end
+        local result = table.pack(pcall(self._Load, self))
+        if history then history.Suspended -= 1; history:Clear() end
+        if router then router.Batch -= 1; router:CheckConflicts(); router:RefreshList() end
+        if not result[1] then return false, tostring(result[2]) end
+        return table.unpack(result, 2, result.n)
     end
     function config:Delete() return manager:DeleteConfig(self.Name) end
     self.Configs[name] = config
@@ -29058,7 +29090,7 @@ function ConfigManager:CreateConfig(name, autoload)
         local ok, value = pcall(isfile, config.Path)
         exists = ok and value == true
     end
-    if config.AutoLoad and exists then
+    if autoload == true and config.AutoLoad and exists then
         task.defer(function()
             local result, message = config:Load()
             if result == false then warn("[ WindUI.ConfigManager ] " .. tostring(message)) end
@@ -29092,6 +29124,10 @@ function ConfigManager:DeleteConfig(name)
     if not ok then return false, "Could not delete config: " .. tostring(result) end
     if not result then return false, "Config file does not exist" end
     self.Configs[name] = nil
+    if self:GetAutoLoad() == name then self.Preferences.autoLoad = nil end
+    local favorite = table.find(self.Preferences.favorites, name)
+    if favorite then table.remove(self.Preferences.favorites, favorite) end
+    self:SavePreferences()
     if self.Window.CurrentConfig and self.Window.CurrentConfig.Path == path then self.Window.CurrentConfig = nil end
     return true
 end
@@ -29119,62 +29155,278 @@ function ConfigManager:Unregister(flag, element)
     end
 end
 
+function ConfigManager:SavePreferences()
+    local ok, message = pcall(function()
+        local written, failure = writefile(self.PreferencesPath, HttpService:JSONEncode(self.Preferences))
+        if written == false then error(failure or "writefile failed") end
+    end)
+    return ok, not ok and tostring(message) or nil
+end
+
+function ConfigManager:Exists(name)
+    local valid = configName(name)
+    if not valid then return false end
+    local path = self.Path .. valid .. ".json"
+    if type(isfile) == "function" then
+        local ok, exists = pcall(isfile, path)
+        return ok and exists == true
+    end
+    local ok, contents = pcall(readfile, path)
+    return ok and type(contents) == "string"
+end
+
+function ConfigManager:UniqueConfigName(name)
+    local valid, message = configName(name)
+    if not valid then return false, message end
+    if not self:Exists(valid) then return valid end
+    local index = 2
+    while true do
+        local suffix = "_" .. index
+        local candidate = valid:sub(1, 64 - #suffix) .. suffix
+        if not self:Exists(candidate) then return candidate end
+        index += 1
+    end
+end
+
+function ConfigManager:SaveNewConfig(name)
+    local unique, message = self:UniqueConfigName(name)
+    if not unique then return false, message end
+    local config, failure = self:CreateConfig(unique, false)
+    if not config then return false, failure end
+    local data, errorMessage = config:Save()
+    if data == false then return false, errorMessage end
+    return unique, data
+end
+
+function ConfigManager:GetAutoLoad() return self.Preferences.autoLoad end
+
+function ConfigManager:SetAutoLoad(name)
+    if name ~= nil and name ~= false then
+        local valid, message = configName(name)
+        if not valid then return false, message end
+        if not self:Exists(valid) then return false, "Save the config first" end
+        name = valid
+    else name = nil end
+    local before = self.Preferences.autoLoad
+    self.Preferences.autoLoad = name
+    local saved, message = self:SavePreferences()
+    if not saved then self.Preferences.autoLoad = before; return false, message end
+    for configName, config in pairs(self.Configs) do config.AutoLoad = configName == name end
+    return true
+end
+
+function ConfigManager:LoadAutoLoad()
+    local name = self:GetAutoLoad()
+    if not name then return true end
+    local config, message = self:CreateConfig(name, false)
+    if not config then return false, message end
+    return config:Load()
+end
+
+function ConfigManager:GetFavorites()
+    local result = {}
+    for _, name in ipairs(self.Preferences.favorites) do if self:Exists(name) then table.insert(result, name) end end
+    table.sort(result)
+    return result
+end
+
+function ConfigManager:IsFavorite(name) return table.find(self.Preferences.favorites, name) ~= nil end
+
+function ConfigManager:SetFavorite(name, value)
+    local valid, message = configName(name)
+    if not valid then return false, message end
+    if not self:Exists(valid) then return false, "Save the config first" end
+    local before = table.clone(self.Preferences.favorites)
+    local index = table.find(self.Preferences.favorites, valid)
+    if value ~= false and not index then table.insert(self.Preferences.favorites, valid)
+    elseif value == false and index then table.remove(self.Preferences.favorites, index) end
+    local ok, failure = self:SavePreferences()
+    if not ok then self.Preferences.favorites = before; return false, failure end
+    return true
+end
+
+function ConfigManager:DuplicateConfig(name, target)
+    local valid, message = configName(name)
+    if not valid then return false, message end
+    if not self:Exists(valid) then return false, "Config file does not exist" end
+    local unique, failure = self:UniqueConfigName(target or valid)
+    if not unique then return false, failure end
+    local ok, result = pcall(function()
+        local contents = readfile(self.Path .. valid .. ".json")
+        local data = HttpService:JSONDecode(contents)
+        if type(data) ~= "table" then error("Invalid config format") end
+        if data.__version == nil then data = { __version = 1.4, __elements = data, __custom = {} } end
+        data.__autoload = false
+        local written, err = writefile(self.Path .. unique .. ".json", HttpService:JSONEncode(data))
+        if written == false then error(err or "writefile failed") end
+    end)
+    if not ok then return false, "Could not duplicate config: " .. tostring(result) end
+    return unique
+end
+
+function ConfigManager:RenameConfig(name, target)
+    local valid, message = configName(name)
+    if not valid then return false, message end
+    local requested, failure = configName(target)
+    if not requested then return false, failure end
+    if not self:Exists(valid) then return false, "Config file does not exist" end
+    if requested == valid then return valid end
+    if type(delfile) ~= "function" then return false, "delfile is unavailable" end
+    local unique, errorMessage = self:UniqueConfigName(requested)
+    if not unique then return false, errorMessage end
+    local oldPath, newPath = self.Path .. valid .. ".json", self.Path .. unique .. ".json"
+    local ok, result = pcall(function()
+        local contents = readfile(oldPath)
+        local written, err = writefile(newPath, contents)
+        if written == false then error(err or "writefile failed") end
+        local deleted, deletionError = delfile(oldPath)
+        if deleted == false then
+            pcall(delfile, newPath)
+            error(deletionError or "delfile failed")
+        end
+    end)
+    if not ok then return false, "Could not rename config: " .. tostring(result) end
+    local config = self.Configs[valid]
+    self.Configs[valid] = nil
+    if config then config.Name, config.Path = unique, newPath; self.Configs[unique] = config end
+    if self:GetAutoLoad() == valid then self.Preferences.autoLoad = unique end
+    local favorite = table.find(self.Preferences.favorites, valid)
+    if favorite then self.Preferences.favorites[favorite] = unique end
+    local persisted, preferenceError = self:SavePreferences()
+    if not persisted then return unique, "Renamed; preferences could not be saved: " .. tostring(preferenceError) end
+    return unique
+end
+
 function ConfigManager:BuildTab(tab, options)
     options = options or {}
-    local name = options.Name or "default"
-    local status = tab:Paragraph({ Title = "Configs", Desc = "Save your settings, or choose a saved config to load." })
-    local input = tab:Input({ Title = "Config name", Value = name, Callback = function(value) name = tostring(value) end })
-    local dropdown = tab:Dropdown({
-        Title = "Saved configs", Values = {}, AllowNone = true, SearchBarEnabled = true,
-        Callback = function(value) if type(value) == "string" and value ~= "" then name = value; input:Set(value) end end,
+    local manager, window = self, self.Window
+    local name, selected = options.Name or "default", nil
+    local refreshing = true
+    local status = tab:Paragraph({ Title = "Config status", Desc = "Save a new config or choose one to load." })
+    local input = tab:Input({ Title = "Config name", Value = name, History = false, Placeholder = "My config", Callback = function(value) name = tostring(value) end })
+    local saved, favorites, autoload, pin
+    local refresh
+    local function choose(value)
+        if refreshing or type(value) ~= "string" or value == "" then return end
+        selected, name = value, value
+        input:Set(value)
+        refresh()
+    end
+    saved = tab:Dropdown({ Title = "Saved configs", Values = {}, Placeholder = "...", AllowNone = true, SearchBarEnabled = true, History = false, Callback = choose })
+    favorites = tab:Dropdown({ Title = "Favourite configs", Values = {}, Placeholder = "...", AllowNone = true, History = false, Callback = choose })
+    autoload = tab:Dropdown({
+        Title = "Auto-load config", Values = { "Disabled (no config)" }, Value = manager:GetAutoLoad() or "Disabled (no config)", History = false,
+        Callback = function(value)
+            if refreshing then return end
+            local ok, message = manager:SetAutoLoad(value ~= "Disabled (no config)" and value or nil)
+            status:SetDesc(ok and (manager:GetAutoLoad() and "Auto-load: " .. manager:GetAutoLoad() .. "." or "Auto-load disabled.") or tostring(message))
+            refresh()
+        end,
     })
-    local function refresh()
-        local names, err = self:AllConfigs()
-        dropdown:Refresh(names)
-        dropdown:Select(table.find(names, name) and name or nil)
-        if err then status:SetDesc(err) end
+    pin = tab:Toggle({
+        Title = "Pin selected config", Value = false, History = false,
+        Callback = function(value)
+            if refreshing then return end
+            local target = selected or name
+            local ok, message = manager:SetFavorite(target, value)
+            status:SetDesc(ok and (value and "Pinned " or "Unpinned ") .. target .. "." or tostring(message))
+            refresh()
+        end,
+    })
+    refresh = function()
+        if refreshing then return end
+        refreshing = true
+        local names, message = manager:AllConfigs()
+        local preferred = manager:GetFavorites()
+        table.sort(names, function(left, right)
+            local leftPinned, rightPinned = manager:IsFavorite(left), manager:IsFavorite(right)
+            if leftPinned ~= rightPinned then return leftPinned end
+            return left < right
+        end)
+        saved:Refresh(names)
+        saved:Select(selected and table.find(names, selected) and selected or nil)
+        favorites:Refresh(preferred)
+        favorites:Select(selected and table.find(preferred, selected) and selected or nil)
+        local choices = { "Disabled (no config)" }
+        for _, configName in ipairs(names) do table.insert(choices, configName) end
+        autoload:Refresh(choices)
+        autoload:Select(manager:GetAutoLoad() or "Disabled (no config)")
+        pin:Set(manager:IsFavorite(selected or name))
+        refreshing = false
+        if message then status:SetDesc(message) end
         return names
     end
-    local function run(action)
-        local ok, result, err = pcall(function()
-            local config, message = self:CreateConfig(name, false)
-            if not config then return false, message end
-            name = config.Name
-            if action == "Save" and options.BeforeSave then options.BeforeSave(config) end
-            local data, failure = config[action](config)
-            if data ~= false and action == "Load" and options.AfterLoad then options.AfterLoad(data, config) end
-            return data, failure
-        end)
+    local function done(result, message, verb)
+        if result == false then status:SetDesc(tostring(message)); return end
+        if type(result) == "string" then selected, name = result, result; input:Set(result) end
         refresh()
-        status:SetDesc(ok and result ~= false and (action == "Save" and "Saved " or "Loaded ") .. name .. "." or tostring(err or result))
+        status:SetDesc(verb .. " " .. tostring(selected or name) .. "." .. (type(message) == "string" and " " .. message or ""))
     end
-    tab:Button({ Title = "Save config", Icon = "lucide:save", Callback = function() run("Save") end })
-    tab:Button({ Title = "Load config", Icon = "lucide:folder-open", Callback = function() run("Load") end })
+    tab:Button({ Title = "Save config", Icon = "lucide:save", Callback = function()
+        local unique, errorMessage = manager:UniqueConfigName(name)
+        if not unique then status:SetDesc(errorMessage); return end
+        local config, failure = manager:CreateConfig(unique, false)
+        if not config then status:SetDesc(failure); return end
+        if options.BeforeSave then options.BeforeSave(config) end
+        local result, message = config:Save()
+        done(result ~= false and unique or false, result == false and message or nil, "Saved")
+    end })
+    tab:Button({ Title = "Load config", Icon = "lucide:folder-open", Callback = function()
+        local config, failure = manager:CreateConfig(name, false)
+        if not config then status:SetDesc(failure); return end
+        local result, message = config:Load()
+        if result ~= false and options.AfterLoad then options.AfterLoad(result, config) end
+        done(result ~= false and config.Name or false, result == false and message or nil, "Loaded")
+    end })
+    tab:Button({ Title = "Rename config", Icon = "lucide:pencil", Locked = type(delfile) ~= "function", LockedTitle = "File deletion unavailable", Callback = function()
+        if not selected then status:SetDesc("Select a saved config, then enter its new name."); return end
+        local result, message = manager:RenameConfig(selected, name)
+        done(result, message, "Renamed to")
+    end })
+    tab:Button({ Title = "Duplicate config", Icon = "lucide:copy", Callback = function()
+        local result, message = manager:DuplicateConfig(selected or name, name)
+        done(result, message, "Duplicated as")
+    end })
     tab:Button({ Title = "Refresh configs", Icon = "lucide:refresh-cw", Callback = refresh })
     tab:Button({
-        Title = "Delete config", Icon = "lucide:trash-2", Locked = type(delfile) ~= "function", LockedTitle = "delfile is unavailable",
+        Title = "Delete config", Icon = "lucide:trash-2", Locked = type(delfile) ~= "function", LockedTitle = "File deletion unavailable",
         Callback = function()
-            local deleting, err = configName(name)
-            if not deleting then status:SetDesc(err); return end
-            self.Window:Dialog({
+            local deleting, errorMessage = configName(selected or name)
+            if not deleting then status:SetDesc(errorMessage); return end
+            window:Dialog({
                 Title = "Delete config", Content = 'Delete "' .. deleting .. '"?',
                 Buttons = {
                     { Title = "Cancel", Variant = "Secondary", Callback = function() end },
                     { Title = "Delete", Variant = "Primary", Callback = function()
-                        local ok, message = self:DeleteConfig(deleting)
+                        local ok, message = manager:DeleteConfig(deleting)
+                        if ok then selected = nil end
                         refresh()
-                        status:SetDesc(ok and "Deleted " .. deleting .. "." or message)
+                        status:SetDesc(ok and "Deleted " .. deleting .. "." or tostring(message))
                     end },
                 },
             }):Open()
         end,
     })
+    refreshing = false
     refresh()
-    return { Refresh = refresh, Status = status, Name = input, List = dropdown }
+    if not manager._AutoLoadStarted then
+        manager._AutoLoadStarted = true
+        task.defer(function()
+            if window.Destroyed then return end
+            local target = manager:GetAutoLoad()
+            if not target then return end
+            local result, message = manager:LoadAutoLoad()
+            if result ~= false then selected, name = target, target; input:Set(target); refresh() end
+            status:SetDesc(result ~= false and "Auto-loaded " .. target .. "." or "Auto-load failed: " .. tostring(message))
+        end)
+    end
+    return { Refresh = refresh, Status = status, Name = input, List = saved, Favorites = favorites, AutoLoad = autoload, Pin = pin }
 end
 
 return ConfigManager
+
 end function a.B():typeof(__modImpl())local aa=a.cache.B if not aa then aa={c=__modImpl()}a.cache.B=aa end return aa.c end end do local function __modImpl()
+
 local aa=a.j()
 
 local ab={}
@@ -29228,7 +29480,7 @@ end
 
 local function CreateGlow(ac,ad,ae,af,ag,ah)
 local ai={Config=ad,Kind=ae,Active=ag~=false,Layers={}}
-local aj=ae=="Window"and 8 or 6
+local aj=ae=="Window"and 18 or 6
 ah=ah or UDim.new(1,0)
 function ai.Refresh(ak)
 local al=ae=="Window"and ac.Appearance.Glow or ak.Config.Glow
@@ -29254,9 +29506,11 @@ end
 if not ak.Glow then return end
 ak.Glow.Visible=am.Enabled and ak.Active
 for an,ao in ipairs(ak.Layers)do
-ao.Stroke.BorderOffset=UDim.new(0,(an-1)*am.Size/aj)
-ao.Stroke.Thickness=am.Size/aj+0.25
-ao.Stroke.Transparency=1-(1-am.Transparency)*(1-(an-1)/aj)^2
+local Distance=(an-1)/aj
+ao.Stroke.BorderOffset=UDim.new(0,Distance*am.Size)
+ao.Stroke.Thickness=am.Size/aj+(ae=="Window"and 0.4 or 0.25)
+local Falloff=ae=="Window"and math.exp(-4.5*Distance*Distance)or(1-Distance)^2
+ao.Stroke.Transparency=1-(1-am.Transparency)*Falloff*(ae=="Window"and 0.65 or 1)
 aa.SetThemeTag(ao.Stroke,{Color=am.Color or ab.Tag(ac,ad,ae=="Window"and"Accent"or ae)})
 end
 end
@@ -29316,7 +29570,9 @@ RefreshShadow()
 aa.UpdateTheme()
 end
 
-return ab end function a.C():typeof(__modImpl())local aa=a.cache.C if not aa then aa={c=__modImpl()}a.cache.C=aa end return aa.c end end do local function __modImpl()
+return ab 
+end function a.C():typeof(__modImpl())local aa=a.cache.C if not aa then aa={c=__modImpl()}a.cache.C=aa end return aa.c end end do local function __modImpl()
+
 
 local aa=a.j()
 local ab=a.C()
@@ -29327,6 +29583,18 @@ local ae={}
 
 local function Escape(af)
 return tostring(af):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;"):gsub('"',"&quot;")
+end
+
+function ad.MaskName(Value)
+local Text=tostring(Value or"")
+local Prefix=Text:match("^@+")or""
+Text=Text:sub(#Prefix+1)
+local Success,Length=pcall(utf8.len,Text)
+Length=Success and Length or #Text
+if not Length or Length==0 then return Prefix.."****"end
+local Keep=math.min(3,math.max(1,math.floor(Length/3)),Length-1)
+local End=Keep>0 and(utf8.offset(Text,Keep+1)or(#Text+1))-1 or 0
+return Prefix..Text:sub(1,End).."****"
 end
 
 function ad.FormatExpiry(af)
@@ -29488,12 +29756,13 @@ local NameWidth=Measure(ap)
 local UsernameWidth=ar.Visible and Measure(ar)or 0
 local RoleWidth=aq.Visible and Measure(aq)+10 or 0
 local ExpiryWidth=as.Visible and Measure(as,nil,ExpiryPlain)or 0
-ag.RequiredWidth=math.ceil(math.max(NameWidth,UsernameWidth,ExpiryWidth,RoleWidth)
+ag.RequiredWidth=math.ceil(math.max(NameWidth+(aq.Visible and RoleWidth+Gap or 0),UsernameWidth,ExpiryWidth,RoleWidth)
 +Left+Padding+af.UIPadding)
-local InlineRole=aq.Visible and NameWidth+RoleWidth+Gap<=DetailsWidth
-local NameSpace=math.max(24,DetailsWidth-(InlineRole and RoleWidth+Gap or 0))
-local NameHeight=LineHeight(ap,NameSpace,18)
+local InlineRole=aq.Visible and DetailsWidth>=96
 local BadgeWidth=math.min(DetailsWidth,math.max(24,RoleWidth))
+if InlineRole then BadgeWidth=math.min(BadgeWidth,DetailsWidth-48-Gap)end
+local NameSpace=math.max(24,DetailsWidth-(InlineRole and BadgeWidth+Gap or 0))
+local NameHeight=LineHeight(ap,NameSpace,18)
 local BadgeHeight=aq.Visible and LineHeight(aq,BadgeWidth-10,18)or 0
 ap.Size=UDim2.fromOffset(NameSpace,NameHeight)
 aq.Size=UDim2.fromOffset(BadgeWidth,BadgeHeight)
@@ -29549,12 +29818,13 @@ ap.TextSize=math.clamp(tonumber(au.NameTextSize)or 14,8,24)
 ar.TextSize=math.clamp(tonumber(au.UsernameTextSize)or 11,8,22)
 aq.TextSize=math.clamp(tonumber(au.RoleTextSize)or 10,8,20)
 as.TextSize=math.clamp(tonumber(au.ExpiresTextSize)or 11,8,22)
-ap.Text=au.Anonymous and"Anonymous"or tostring(au.Name or au.DisplayName or ah.DisplayName)
+local Name=tostring(au.Name or au.DisplayName or ah.DisplayName)
+ap.Text=au.Anonymous and"Anonymous"or au.SemiBlur and ad.MaskName(Name)or Name
 local av=au.Username
 if type(av)=="function"then local aw,ax=pcall(av);av=aw and ax or nil end
 av=tostring(av or ah.Name):gsub("^@+","")
-ar.Text=au.Anonymous and"@anonymous"or"@"..av
-ar.Visible=au.ShowUsername~=false
+ar.Text=au.Anonymous and"@anonymous"or au.SemiBlur and ad.MaskName("@"..av)or"@"..av
+ar.Visible=au.ShowUsername==true
 RefreshAvatar()
 aq.Text=tostring(au.Role or"")
 aq.Visible=aq.Text~=""
@@ -29596,6 +29866,7 @@ function ag.SetRoleColor(au,av)au.RoleColor=av;au:Refresh();return au end
 function ag.SetExpires(au,av,aw)au.Expires=av;if aw~=nil then au.ExpiresColor=aw end;au:Refresh();StartExpiry();return au end
 function ag.SetExpiresColor(au,av)au.ExpiresColor=av;au:Refresh();return au end
 function ag.SetAnonymous(au,av)au.Anonymous=av~=false;au:Refresh();if af.StatsBar and af.StatsBar.Refresh then af.StatsBar:Refresh()end;return au end
+function ag.SetSemiBlur(Self,Value)Self.SemiBlur=Value==true;Self:Refresh();if af.StatsBar then af.StatsBar:Refresh()end;return Self end
 function ag.Enable(au)
 au.Enabled=true
 am.Visible=true
@@ -29622,7 +29893,9 @@ StartExpiry()
 return am
 end
 
-return ad end function a.D():typeof(__modImpl())local aa=a.cache.D if not aa then aa={c=__modImpl()}a.cache.D=aa end return aa.c end end do local function __modImpl()
+return ad 
+end function a.D():typeof(__modImpl())local aa=a.cache.D if not aa then aa={c=__modImpl()}a.cache.D=aa end return aa.c end end do local function __modImpl()
+
 
 local aa=a.j()
 local ab=game:GetService"UserInputService"
@@ -29638,13 +29911,47 @@ local ae={MouseButton1="MB1",MouseButton2="MB2",MouseButton3="MB3",
 LeftAlt="LAlt",RightAlt="RAlt",LeftControl="LCtrl",RightControl="RCtrl",
 LeftShift="LShift",RightShift="RShift",None="_"}
 
-function ac.Normalize(af)
-if typeof(af)=="EnumItem"then af=af.Name end
-if type(af)~="string"then return"None"end
-af=ad[af]or af
-if af=="None"or af=="MouseButton1"or af=="MouseButton2"or af=="MouseButton3"then return af end
-local ag,ah=pcall(function()return Enum.KeyCode[af]end)
-return ag and ah and af or"None"
+local ModifierKeys={LeftControl="Ctrl",RightControl="Ctrl",LeftShift="Shift",RightShift="Shift",LeftAlt="Alt",RightAlt="Alt"}
+local ModifierNames={ctrl="Ctrl",control="Ctrl",lctrl="Ctrl",rctrl="Ctrl",leftcontrol="Ctrl",rightcontrol="Ctrl",
+shift="Shift",lshift="Shift",rshift="Shift",leftshift="Shift",rightshift="Shift",alt="Alt",lalt="Alt",ralt="Alt",leftalt="Alt",rightalt="Alt"}
+local ModifierOrder={"Ctrl","Shift","Alt"}
+local WarningColor=Color3.fromRGB(237,176,84)
+ad.LShift,ad.RShift="LeftShift","RightShift"
+ad.Ctrl,ad.Control,ad.Shift,ad.Alt="LeftControl","LeftControl","LeftShift","LeftAlt"
+local function SingleKey(Value)
+Value=ad[Value]or Value
+if #Value==1 then Value=Value:upper()end
+if Value=="None"or Value=="MouseButton1"or Value=="MouseButton2"or Value=="MouseButton3"then return Value end
+local Success,Item=pcall(function()return Enum.KeyCode[Value]end)
+return Success and Item and Value or"None"
+end
+function ac.Normalize(Value)
+if typeof(Value)=="EnumItem"then Value=Value.Name end
+if type(Value)~="string"then return"None"end
+Value=Value:match("^%s*(.-)%s*$")
+if not Value:find("+",1,true)then return SingleKey(Value)end
+Value=Value:gsub("%s+","")
+if Value:sub(1,1)=="+"or Value:sub(-1)=="+"or Value:find("++",1,true)then return"None"end
+local Modifiers,Main={},nil
+for Part in Value:gmatch("[^+]+")do
+local Modifier=ModifierNames[Part:lower()]
+if Modifier then Modifiers[Modifier]=true elseif Main then return"None"else Main=SingleKey(Part)end
+end
+if not Main or Main=="None"then return"None"end
+local Parts={}
+for _,Modifier in ipairs(ModifierOrder)do if Modifiers[Modifier]then table.insert(Parts,Modifier)end end
+table.insert(Parts,Main)
+return table.concat(Parts,"+")
+end
+function ac.Display(Value)
+return(ac.Normalize(Value):gsub("[^+]+",function(Part)return ae[Part]or Part end))
+end
+local function Parse(Value)
+local Modifiers,Main={},"None"
+for Part in Value:gmatch("[^+]+")do
+if Part=="Ctrl"or Part=="Shift"or Part=="Alt"then Modifiers[Part]=true else Main=Part end
+end
+return Main,Modifiers
 end
 
 local function InputKey(af)
@@ -29714,6 +30021,19 @@ function af.ClearKeybinds(ah,IncludePanelToggle)
 local Router=ah._KeybindRouter
 return Router and Router:ClearBindings(IncludePanelToggle==true)or 0
 end
+function af.SetKeybindListCurrentTabOnly(Self,Value)
+local Router=ac.Router(Self)
+Router.ListOptions.CurrentTabOnly=Value==true
+Router:RefreshList()
+return Self
+end
+function af.ResetKeybindListPosition(Self)
+if Self._KeybindRouter then Self._KeybindRouter:ResetPosition()end
+return Self
+end
+function af.GetKeybindConflicts(Self)
+return Self._KeybindRouter and Self._KeybindRouter:GetConflicts()or{}
+end
 if ac.Normalize(ag.ToggleKey)~="None"then ac.Router(af)end
 end
 
@@ -29730,13 +30050,95 @@ function ac.Router(af)
 if af._KeybindRouter then return af._KeybindRouter end
 ac.Setup(af)
 if af._KeybindRouter then return af._KeybindRouter end
-local ag={Records={},Picking=nil}
+local ag={Records={},Picking=nil,Held={},Batch=0,Warned={},Conflicts={},KeyIndex={}}
 af._KeybindRouter=ag
 ag.ListOptions=type(af.KeybindList)=="table"and af.KeybindList or{}
+function ag.Modifiers(Self)
+local Values={}
+for Key,Modifier in pairs(ModifierKeys)do
+local Held=Self.Held[Key]==true
+if not Held then local Success,Down=pcall(function()return ab:IsKeyDown(Enum.KeyCode[Key])end);Held=Success and Down==true end
+if Held then Values[Modifier]=true end
+end
+return Values
+end
+function ag.WithModifiers(Self,Key,Modifiers)
+local Parts={}
+for _,Modifier in ipairs(ModifierOrder)do if Modifiers[Modifier]then table.insert(Parts,Modifier)end end
+table.insert(Parts,Key)
+return ac.Normalize(table.concat(Parts,"+"))
+end
+function ag.Matches(Self,Record,Key,Modifiers)
+if Record.Value=="None"or Record.MainKey~=Key then return false end
+for _,Modifier in ipairs(ModifierOrder)do
+if ModifierKeys[Key]~=Modifier and(Modifiers[Modifier]==true)~=(Record.Modifiers[Modifier]==true)then return false end
+end
+return true
+end
+function ag.CaptureText(Self,Record)
+if Self.Picking~=Record then return ac.Display(Record.Value)end
+local Modifiers,Parts=Self:Modifiers(),{}
+for _,Modifier in ipairs(ModifierOrder)do if Modifiers[Modifier]then table.insert(Parts,Modifier)end end
+table.insert(Parts,"...")
+return table.concat(Parts,"+")
+end
+function ag.GetConflicts(Self)
+local Result={}
+for Key,Records in pairs(Self.Conflicts)do
+local Owners={}
+for _,Record in ipairs(Records)do table.insert(Owners,Record.Owner)end
+Result[Key]=Owners
+end
+return Result
+end
+function ag.CheckConflicts(Self,Changed)
+if Self.Batch>0 then return end
+local Index,Conflicts,Warned,KeyIndex={},{},{},{}
+for _,Record in ipairs(Self.Records)do
+Record.MainKey,Record.Modifiers=Parse(Record.Value)
+Record.Conflict=false
+if Record.Value~="None"then
+Index[Record.Value]=Index[Record.Value]or{};table.insert(Index[Record.Value],Record)
+KeyIndex[Record.MainKey]=KeyIndex[Record.MainKey]or{};table.insert(KeyIndex[Record.MainKey],Record)
+end
+end
+for Key,Records in pairs(Index)do
+if #Records>1 then
+Conflicts[Key]=Records
+local Titles={}
+for _,Record in ipairs(Records)do Record.Conflict=true;table.insert(Titles,tostring(Record.Owner.Title or"Action"))end
+table.sort(Titles)
+local Signature=Key..":"..table.concat(Titles,"|")
+Warned[Signature]=Self.Warned[Signature]
+if Changed and Changed.Value==Key and not Warned[Signature]and Self.ListOptions.WarnOnConflict~=false
+and not(af._SettingHistory and af._SettingHistory.Suspended>0)then
+task.defer(function()
+if af.Destroyed or Changed.Value~=Key or not Changed.Conflict or Self.Warned[Signature]then return end
+Self.Warned[Signature]=true
+if af.WindUI and af.WindUI.Notify then af.WindUI:Notify({Title="Keybind conflict",Content=ac.Display(Key).." is used by "..table.concat(Titles,", ")..".",Duration=4})end
+end)
+end
+end
+end
+Self.Conflicts,Self.Warned,Self.KeyIndex=Conflicts,Warned,KeyIndex
+for _,Record in ipairs(Self.Records)do
+if Record.Label then aa.SetThemeTag(Record.Label,{TextColor3=Record.Conflict and WarningColor or"Placeholder"})end
+end
+end
+function ag.BindingsChanged(Self,Record)
+Self:CheckConflicts(Record)
+Self:RefreshList()
+end
+function ag.ResetPosition(Self)
+if not Self.List then return end
+if Self.Drag then Self.Drag:Set(false)end
+Self.List.Position=Self.InitialPosition
+if Self.Drag then Self.Drag:Set(Self.ListOptions.Draggable~=false)end
+end
 function ag.StopPickingForInput(ah,Input)
 ah.ClearInput=Input
 local Picking=ah.Picking
-ah.Picking=nil
+ah.Picking,ah.PickModifier=nil,nil
 if Picking then Picking:Refresh()end
 if ah.LastPickInput==Input and ah.LastPickRecord then
 ah.LastPickRecord:Set(ah.LastPickValue)
@@ -29747,6 +30149,7 @@ function ag.BeginPicking(ah,Record)
 if not CanChange(Record)or af.Destroyed then return false end
 local Previous=ah.Picking
 ah.Picking=Previous==Record and nil or Record
+ah.PickModifier=nil
 if Previous then Previous:Refresh()end
 Record:Refresh()
 return true
@@ -29756,17 +30159,21 @@ if not CanChange(Record)or af.Destroyed then return false end
 Record:Set("None")
 return true
 end
-function ag.ClearBindings(ah,IncludePanelToggle)
-local Picking=ah.Picking
-ah.Picking=nil
-if Picking then Picking:Refresh()end
+function ag.ClearBindings(Self,IncludePanelToggle)
 local Count=0
-for _,Record in ipairs(ah.Records)do
-if (IncludePanelToggle or Record~=ah.VisibilityBind)and Record.Value~="None"and CanChange(Record)then
-Record:Set("None")
-Count+=1
+local function Clear()
+local Picking=Self.Picking
+Self.Picking,Self.PickModifier=nil,nil
+if Picking then Picking:Refresh()end
+Self.Batch+=1
+for _,Record in ipairs(Self.Records)do
+if(IncludePanelToggle or Record~=Self.VisibilityBind)and Record.Value~="None"and CanChange(Record)then Record:Set("None");Count+=1 end
 end
+Self.Batch-=1
+Self:CheckConflicts()
+Self:RefreshList()
 end
+if af._SettingHistory then af._SettingHistory:Group("Clear keybinds",Clear)else Clear()end
 return Count
 end
 function ag.RefreshVisibility(ah)
@@ -29780,7 +30187,7 @@ local ai=af.GetBackgroundTransparency and af:GetBackgroundTransparency()
 ah.List.BackgroundTransparency=math.clamp(tonumber(ai)or(af.Transparent and 0.15 or 0),0,1)
 end
 function ag.RefreshList(ah)
-if not ah.List or not ah.List.Parent then return end
+if ah.Batch>0 or not ah.List or not ah.List.Parent then return end
 local ai,aj=26,28
 local ak=ah.VisibilityRow and 1 or 0
 local HasControlKeys=false
@@ -29792,7 +30199,9 @@ end
 for al,am in ipairs(ah.Records)do
 if am~=ah.VisibilityBind and am.Value~="None"and CanChange(am)then HasControlKeys=true end
 if am.Options.ShowInList==false then continue end
-local an=(am.Value~="None"or ah.ListOptions.ShowUnbound==true)
+local Tab=am.Owner.Tab
+local InTab=ah.ListOptions.CurrentTabOnly~=true or not Tab or Tab.Index==af.CurrentTab
+local an=InTab and(am.Value~="None"or ah.ListOptions.ShowUnbound==true)
 and(ah.ListOptions.OnlyActive~=true or am.Owner.Value==true)
 if not am.Row then
 am.Row=aa.New("Frame",{Size=UDim2.new(1,-20,0,22),Position=UDim2.fromOffset(10,0),BackgroundTransparency=1,Parent=ah.List})
@@ -29812,45 +30221,60 @@ if an then
 ak+=1
 am.Row.Size=UDim2.new(1,-20,0,ai)
 am.Row.Position=UDim2.fromOffset(10,aj+4+(ak-1)*ai)
-am.RowTitle.Text=tostring(am.Owner.Title or"Action")
-am.RowKey.Text="[ "..(ae[am.Value]or am.Value).." ]"
-aa.SetThemeTag(am.RowTitle,{TextColor3=am.Owner.Value==true and"Accent"or"Placeholder"})
+am.RowTitle.Text=tostring(am.Owner.Title or"Action")..(am.Conflict and" !"or"")
+am.RowKey.Text="[ "..ah:CaptureText(am).." ]"
+local KeyWidth=math.clamp(math.max(am.RowKey.TextBounds.X,#am.RowKey.Text*6)+4,42,154)
+am.RowKey.Size=UDim2.new(0,KeyWidth,1,0)
+am.RowTitle.Size=UDim2.new(1,-KeyWidth-30,1,0)
+aa.SetThemeTag(am.RowKey,{TextColor3=am.Conflict and WarningColor or"Placeholder"})
+aa.SetThemeTag(am.RowTitle,{TextColor3=am.Conflict and WarningColor or am.Owner.Value==true and"Accent"or"Placeholder"})
 end
 end
-ah.Header.Size=UDim2.new(1,-70,0,aj)
+ah.Header.Size=UDim2.new(1,-52,0,aj)
 ah.ClearAll.Active=HasControlKeys
-ah.ClearAll.TextTransparency=HasControlKeys and 0.2 or 0.65
+ah.ClearIcon.ImageTransparency=HasControlKeys and 0.25 or 0.7
 ah.Line.Position=UDim2.fromOffset(0,aj)
-ah.List.Size=UDim2.fromOffset(math.clamp(tonumber(ah.ListOptions.Width)or 220,120,320),aj+10+ak*ai)
+ah.List.Size=UDim2.fromOffset(math.clamp(tonumber(ah.ListOptions.Width)or 250,160,360),aj+10+ak*ai)
 ah:RefreshTransparency()
 ah:RefreshVisibility()
 end
 function ag.EnsureList(ah)
 if ah.List then return end
 local ai=ah.ListOptions
-local aj=math.clamp(tonumber(ai.Width)or 220,120,320)
+local aj=math.clamp(tonumber(ai.Width)or 250,160,360)
+ah.InitialPosition=ai.Position or(af.UIElements.Main.AbsolutePosition.X>=aj+20 and UDim2.fromOffset(-aj-20,0)or UDim2.new(1,-aj-12,0,58))
 ag.List=aa.New("Frame",{Name="KeybindList",Size=UDim2.fromOffset(aj,38),
-Position=ai.Position or(af.UIElements.Main.AbsolutePosition.X>=aj+20 and UDim2.fromOffset(-aj-20,0)or UDim2.new(1,-aj-12,0,58)),
+Position=ah.InitialPosition,
 BackgroundTransparency=0,Visible=false,ThemeTag={BackgroundColor3="Dialog"},Parent=af.UIElements.Main,ZIndex=100,
 },{aa.New("UICorner",{CornerRadius=UDim.new(0,6)})})
 ah.Header=aa.New("TextLabel",{Name="Header",Size=UDim2.new(1,-20,0,28),Position=UDim2.fromOffset(10,0),Text=ai.Title or"Keybinds",TextSize=12,
 BackgroundTransparency=1,TextXAlignment="Left",TextTruncate="AtEnd",FontFace=Font.new(aa.Font,Enum.FontWeight.Medium),ThemeTag={TextColor3="Text"},Parent=ag.List})
-ah.ClearAll=aa.New("TextButton",{Name="ClearKeybinds",Text="Clear",Size=UDim2.fromOffset(40,26),
-Position=UDim2.new(1,-10,0,1),AnchorPoint=Vector2.new(1,0),TextSize=11,
-FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),BackgroundTransparency=1,AutoButtonColor=false,
-ThemeTag={TextColor3="Placeholder"},Parent=ag.List})
+ah.ClearAll=aa.New("TextButton",{Name="ClearKeybinds",Text="",Size=UDim2.fromOffset(22,22),
+Position=UDim2.new(1,-8,0,3),AnchorPoint=Vector2.new(1,0),BackgroundTransparency=1,AutoButtonColor=false,
+ThemeTag={BackgroundColor3="ElementBackground"},Parent=ag.List},{aa.New("UICorner",{CornerRadius=UDim.new(0,4)})})
+local Icon=aa.Icon("lucide:eraser")
+ah.ClearIcon=aa.New("ImageLabel",{Image=Icon[1],ImageRectSize=Icon[2].ImageRectSize,ImageRectOffset=Icon[2].ImageRectPosition,
+Size=UDim2.fromOffset(13,13),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=1,
+ThemeTag={ImageColor3="Placeholder"},Parent=ah.ClearAll})
+local Hint=aa.New("TextLabel",{Name="ClearHint",Text="Clear bindings",TextSize=11,Size=UDim2.fromOffset(100,22),
+Position=UDim2.new(1,-8,0,-26),AnchorPoint=Vector2.new(1,0),BackgroundTransparency=0.05,Visible=false,
+FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),ThemeTag={TextColor3="Text",BackgroundColor3="Dialog"},Parent=ag.List},
+{aa.New("UICorner",{CornerRadius=UDim.new(0,4)})})
+aa.AddSignal(ah.ClearAll.MouseEnter,function()ah.ClearAll.BackgroundTransparency=0.9;Hint.Visible=true end)
+aa.AddSignal(ah.ClearAll.MouseLeave,function()ah.ClearAll.BackgroundTransparency=1;Hint.Visible=false end)
 aa.AddSignal(ah.ClearAll.InputBegan,function(Input)
 if Input.UserInputType==Enum.UserInputType.MouseButton1 or Input.UserInputType==Enum.UserInputType.Touch then ah:StopPickingForInput(Input)end
 end)
 aa.AddSignal(ah.ClearAll.Activated,function()ah:ClearBindings(false)end)
-ah.Line=aa.New("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.fromOffset(0,28),BackgroundTransparency=0.2,ThemeTag={BackgroundColor3="Accent"},Parent=ag.List})
-if ai.Draggable~=false then aa.Drag(ag.List,{ah.Header})end
+ah.Line=aa.New("Frame",{Size=UDim2.new(1,0,0,1),Position=UDim2.fromOffset(0,28),BackgroundTransparency=0.75,ThemeTag={BackgroundColor3="Outline"},Parent=ag.List})
+if ai.Draggable~=false then ah.Drag=aa.Drag(ag.List,{ah.Header})end
 ah.VisibilityRow=aa.New("Frame",{Name="KeybindListToggle",Size=UDim2.new(1,-20,0,26),
 Position=UDim2.fromOffset(10,32),Visible=true,BackgroundTransparency=1,Parent=ah.List})
 ah.VisibilityTitle=aa.New("TextLabel",{Text="Keybind ui toggle",Size=UDim2.new(1,-46,1,0),
 TextSize=12,TextXAlignment="Left",TextTruncate="AtEnd",RichText=false,BackgroundTransparency=1,
 FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),ThemeTag={TextColor3="Placeholder"},Parent=ah.VisibilityRow})
-ah.VisibilityBind=ac.Attach(af,{Title="Keybind ui toggle"},ah.VisibilityRow,{
+local Owner={Title="Keybind ui toggle",__type="Button"}
+ah.VisibilityBind=ac.Attach(af,Owner,ah.VisibilityRow,{
 Key=ai.ToggleKey or"None",ShowInList=false,
 Changed=function(ak)
 ai.ToggleKey=ak
@@ -29864,52 +30288,63 @@ ah.VisibilityClear=ClearButton(ah.VisibilityRow,ah,function()ah:ClearRecord(ah.V
 ah.VisibilityBind.Row=ah.VisibilityRow
 ah.VisibilityBind.RowTitle=ah.VisibilityTitle
 ah.VisibilityBind.RowKey=ah.VisibilityBind.Label
+Owner.Keybind=ah.VisibilityBind
+if af._SettingHistory then af._SettingHistory:Track(Owner,{ContextMenu=false})end
 aa.AddSignal(ah.Header:GetPropertyChangedSignal"TextSize",function()ah:RefreshList()end)
 ah:RefreshList()
 end
 if af._KeybindListVisible or ac.Normalize(ag.ListOptions.ToggleKey)~="None"then ag:EnsureList()end
-local ah=aa.AddSignal(ab.InputBegan,function(ah,ai)
-local aj=InputKey(ah)
-if ag.ClearInput==ah then return end
-if ab:GetFocusedTextBox()then return end
+local ah=aa.AddSignal(ab.InputBegan,function(Input,Processed)
+local Key=InputKey(Input)
+if ModifierKeys[Key]then ag.Held[Key]=true end
+if ag.ClearInput==Input or ab:GetFocusedTextBox()then return end
 if ag.Picking then
-local ak=ag.Picking
-ag.LastPickInput,ag.LastPickRecord,ag.LastPickValue=ah,ak,ak.Value
-if aj=="Escape"then
-ag.Picking=nil
-ak:Refresh()
-elseif aj=="Backspace"or aj=="Delete"then
-ag.Picking=nil
-ak:Set"None"
-elseif ac.Normalize(aj)~="None"and(not ak.Options.Blacklist or not ak.Options.Blacklist[aj])then
-ag.Picking=nil
-ak:Set(aj)
+local Record=ag.Picking
+if not CanChange(Record)then ag.Picking=nil;Record:Refresh();return end
+if ModifierKeys[Key]then ag.PickModifier=Key;Record:Refresh();return end
+ag.LastPickInput,ag.LastPickRecord,ag.LastPickValue=Input,Record,Record.Value
+if Key=="Escape"then ag.Picking,ag.PickModifier=nil,nil;Record:Refresh()
+elseif Key=="Backspace"or Key=="Delete"then Record:Set("None")
+else
+local Value=ag:WithModifiers(Key,ag:Modifiers())
+if Value~="None"and(not Record.Options.Blacklist or not Record.Options.Blacklist[Value]and not Record.Options.Blacklist[Key])then Record:Set(Value)end
 end
 return
 end
 if af.Destroyed then return end
-for ak,al in ipairs(ag.Records)do
-if al.Value~="None"and al.Value==aj and not al.Owner.Locked
-and(not ai or al.Options.IgnoreProcessed==false)and not al.Down then
-al.Down=true
-al.OnPress()
-ag:RefreshList()
+local Records=ag.KeyIndex[Key]
+if not Records then return end
+local Modifiers=ag:Modifiers()
+local Changed=false
+for _,Record in ipairs(Records)do
+if ag:Matches(Record,Key,Modifiers)and not Record.Owner.Locked and(not Processed or Record.Options.IgnoreProcessed==false)and not Record.Down then
+Record.Down=true
+if Record.Options.Mode=="Hold"then Record.HoldValue=Record.Owner.Value end
+Record.OnPress()
+Changed=true
 end
 end
+if Changed then ag:RefreshList()end
 end)
-local ai=aa.AddSignal(ab.InputEnded,function(ai)
-local aj=InputKey(ai)
-for ak,al in ipairs(ag.Records)do
-if al.Down and al.Value==aj then
-al.Down=false
-if al.OnRelease then al.OnRelease()end
-ag:RefreshList()
+local ai=aa.AddSignal(ab.InputEnded,function(Input)
+local Key=InputKey(Input)
+ag.Held[Key]=nil
+if ag.Picking and ag.PickModifier==Key then
+local Record=ag.Picking
+if CanChange(Record)and not ab:GetFocusedTextBox()and not next(ag:Modifiers())then Record:Set(Key)else Record:Refresh()end
 end
+local Modifiers,Changed=ag:Modifiers(),false
+for _,Record in ipairs(ag.Records)do
+local Release=Record.MainKey==Key
+for Modifier in pairs(Record.Modifiers or{})do if not Modifiers[Modifier]then Release=true end end
+if Record.Down and Release then Record.Down=false;Changed=true;if Record.OnRelease then Record.OnRelease()end end
 end
+if Changed then ag:RefreshList()end
 end)
 local aj=aa.AddSignal(ab.WindowFocusReleased,function()
 local aj=ag.Picking
-ag.Picking=nil
+ag.Picking,ag.PickModifier=nil,nil
+table.clear(ag.Held)
 if aj then aj:Refresh()end
 for ak,al in ipairs(ag.Records)do
 if al.Down then
@@ -29926,6 +30361,9 @@ aj:Disconnect()
 ag.Picking=nil
 ag.LastPickInput,ag.LastPickRecord,ag.ClearInput=nil,nil,nil
 table.clear(ag.Records)
+table.clear(ag.Held)
+table.clear(ag.Conflicts)
+table.clear(ag.KeyIndex)
 end)
 return ag
 end
@@ -29949,19 +30387,22 @@ ThemeTag={TextColor3="Placeholder"},Parent=ap,TextTruncate="AtEnd",
 ao.Button=ap
 ao.Label=aq
 function ao.Refresh(ar)
-aq.Text=an.Picking==ar and"..."or ae[ar.Value]or ar.Value
-local as=math.clamp(math.max(aq.TextBounds.X,#aq.Text*(aq.TextSize or 11)*0.55)+12,30,110)
+aq.Text=an:CaptureText(ar)
+local as=math.clamp(math.max(aq.TextBounds.X,#aq.Text*(aq.TextSize or 11)*0.55)+12,30,164)
 ap.Size=UDim2.fromOffset(as,math.max(22,(aq.TextSize or 11)+8))
 if al then al(as)end
 an:RefreshList()
 end
 function ao.Set(ar,as)
-if an.Picking==ar then an.Picking=nil end
+if an.Picking==ar then an.Picking,an.PickModifier=nil,nil end
 if ar.Down and ar.OnRelease then ar.OnRelease()end
 ar.Down=false
+ar.HoldValue=nil
 ar.Value=ac.Normalize(as)
+ar.MainKey,ar.Modifiers=Parse(ar.Value)
 ar:Refresh()
 if ar.Options.Changed then aa.SafeCallback(ar.Options.Changed,ar.Value)end
+an:BindingsChanged(ar)
 return ar.Value
 end
 function ao.Clear(ar)return an:ClearRecord(ar)end
@@ -29977,14 +30418,20 @@ if an.Picking==ao then an.Picking=nil end
 local ar=table.find(an.Records,ao)
 if ar then table.remove(an.Records,ar)end
 if ao.Row and ao.Row~=ah then ao.Row:Destroy()end
+an:CheckConflicts()
 an:RefreshList()
 end)
 table.insert(an.Records,ao)
+ao.MainKey,ao.Modifiers=Parse(ao.Value)
 ao:Refresh()
+an:BindingsChanged(ao)
 return ao
 end
 
-return ac end function a.E():typeof(__modImpl())local aa=a.cache.E if not aa then aa={c=__modImpl()}a.cache.E=aa end return aa.c end end do local function __modImpl()
+return ac 
+
+end function a.E():typeof(__modImpl())local aa=a.cache.E if not aa then aa={c=__modImpl()}a.cache.E=aa end return aa.c end end do local function __modImpl()
+
 
 local aa=a.j()
 local ab=a.C()
@@ -30115,8 +30562,10 @@ if not an then return end
 local au=ah.Name
 if type(au)=="function"then local av,aw=pcall(au);au=av and aw or nil end
 local Anonymous=af.User and af.User.Anonymous==true
-ar[1].Text=Anonymous and"Anonymous"or tostring(au or af.User.Name or ad.DisplayName)
-ar[2].Text=Anonymous and"anonymous"or ad.Name
+local Name=tostring(au or af.User.Name or ad.DisplayName)
+local SemiBlur=af.User and af.User.SemiBlur==true
+ar[1].Text=Anonymous and"Anonymous"or SemiBlur and a.D().MaskName(Name)or Name
+ar[2].Text=Anonymous and"anonymous"or SemiBlur and a.D().MaskName(ad.Name)or ad.Name
 ar[5].Text=ae.FormatTime(time()-aj)
 aa.SetThemeTag(aq,{BackgroundColor3=ab.Color(ah.BackgroundColor,aa.GetThemeProperty"Dialog")})
 aq.BackgroundTransparency=math.clamp(tonumber(ah.Transparency)or 0.04,0,1)
@@ -30175,7 +30624,8 @@ ai:Refresh()
 return ai
 end
 
-return ae end function a.F():typeof(__modImpl())local aa=a.cache.F if not aa then aa={c=__modImpl()}a.cache.F=aa end return aa.c end end do local function __modImpl()
+return ae 
+end function a.F():typeof(__modImpl())local aa=a.cache.F if not aa then aa={c=__modImpl()}a.cache.F=aa end return aa.c end end do local function __modImpl()
 
 local aa={}
 
@@ -32709,6 +33159,7 @@ return an.__type,an
 end
 
 return ad end function a.P():typeof(__modImpl())local aa=a.cache.P if not aa then aa={c=__modImpl()}a.cache.P=aa end return aa.c end end do local function __modImpl()
+
 local Creator = a.j()
 local New = Creator.New
 local Label = a.y().New
@@ -32755,18 +33206,23 @@ function Element:New(Config)
 	}
 	function Record:Refresh()
 		Keybind.Picking = Router.Picking == self
-		Picker.Frame.Frame.TextLabel.Text = Keybind.Picking and "..." or (self.Value == "None" and "_" or self.Value)
-		Picker.Size = UDim2.new(0, 24 + Picker.Frame.Frame.TextLabel.TextBounds.X, 0, 42)
+		Picker.Frame.Frame.TextLabel.Text = Router:CaptureText(self)
+		local Width = 24 + Picker.Frame.Frame.TextLabel.TextBounds.X
+		Picker.Size = UDim2.new(0, Width, 0, 42)
+		Keybind.KeybindFrame.UIElements.Container.TitleFrame.Size = UDim2.new(1, -Width - 12, 0, 0)
 		Router:RefreshList()
 	end
 	function Record:Set(Value)
-		if Router.Picking == self then Router.Picking = nil end
+		if Router.Picking == self then Router.Picking, Router.PickModifier = nil, nil end
 		self.Value = InlineKeybind.Normalize(Value)
 		self.Down = false
 		Keybind.Value = self.Value
 		self:Refresh()
+		Router:BindingsChanged(self)
 		return self.Value
 	end
+	Keybind._KeybindRecord = Record
+	Record.Label = Picker.Frame.Frame.TextLabel
 	function Keybind:Set(Value) return Record:Set(Value) end
 	function Keybind:Clear() return Router:ClearRecord(Record) end
 	function Keybind:ClearKeybind() return self:Clear() end
@@ -32782,7 +33238,9 @@ function Element:New(Config)
 	end
 	Creator.AddSignal(Main.MouseButton1Click, function() Router:BeginPicking(Record) end)
 	Creator.AddSignal(Main.InputBegan, function(Input)
-		if Input.UserInputType == Enum.UserInputType.MouseButton2 and not Router.Picking and Router.LastPickInput ~= Input then Router:ClearRecord(Record) end
+		local Position, Size, Point = Picker.AbsolutePosition, Picker.AbsoluteSize, Input.Position
+		local OverPicker = Point and Point.X >= Position.X and Point.X <= Position.X + Size.X and Point.Y >= Position.Y and Point.Y <= Position.Y + Size.Y
+		if Input.UserInputType == Enum.UserInputType.MouseButton2 and OverPicker and not Router.Picking and Router.LastPickInput ~= Input then Router:ClearRecord(Record) end
 	end)
 	Creator.AddSignal(Picker.Frame.Frame.TextLabel:GetPropertyChangedSignal("TextBounds"), function()
 		Picker.Size = UDim2.new(0, 24 + Picker.Frame.Frame.TextLabel.TextBounds.X, 0, 42)
@@ -32794,15 +33252,19 @@ function Element:New(Config)
 		if Record.Row then Record.Row:Destroy() end
 		Record.Down = false
 		Keybind.Picking = false
+		Router:CheckConflicts()
 		Router:RefreshList()
 	end)
 	table.insert(Router.Records, Record)
 	Record:Refresh()
+	Router:BindingsChanged(Record)
 	if Keybind.Locked then Keybind:Lock() end
 	return Keybind.__type, Keybind
 end
 
-return Element end function a.Q():typeof(__modImpl())local aa=a.cache.Q if not aa then aa={c=__modImpl()}a.cache.Q=aa end return aa.c end end do local function __modImpl()
+return Element 
+
+end function a.Q():typeof(__modImpl())local aa=a.cache.Q if not aa then aa={c=__modImpl()}a.cache.Q=aa end return aa.c end end do local function __modImpl()
 
 local aa=a.j()local ab=
 aa.New local ac=
@@ -36247,6 +36709,7 @@ return ao.__type,ao
 end
 
 return al end function a.ae():typeof(__modImpl())local aa=a.cache.ae if not aa then aa={c=__modImpl()}a.cache.ae=aa end return aa.c end end do local function __modImpl()
+
 return{
 Elements={
 Paragraph=a.J(),
@@ -36360,6 +36823,8 @@ end
 
 ak.AllElements[at.GlobalIndex]=av
 aa.Elements[at.Index]=av
+if ak._SettingHistory then ak._SettingHistory:Track(av,at)end
+if ak._KeybindRouter then ak._KeybindRouter:RefreshList()end
 
 
 if ak.NewElements then
@@ -36398,7 +36863,9 @@ end
 end
 end,
 }
+
 end function a.af():typeof(__modImpl())local aa=a.cache.af if not aa then aa={c=__modImpl()}a.cache.af=aa end return aa.c end end do local function __modImpl()
+
 
 local aa=(cloneref or clonereference or function(aa)
 return aa
@@ -37070,12 +37537,24 @@ AnchorPoint=Vector2.new(0,0),
 at:Play()
 end)
 
+Window.CurrentTab=aq
+if Window._SettingHistory then Window._SettingHistory:CloseMenu()end
+if Window._KeybindRouter then
+local Router=Window._KeybindRouter
+if Router.Picking and Router.ListOptions.CurrentTabOnly and Router.Picking.Owner.Tab and Router.Picking.Owner.Tab.Index~=aq then
+local Picking=Router.Picking
+Router.Picking,Router.PickModifier=nil,nil
+Picking:Refresh()
+end
+Router:RefreshList()
+end
 ao.OnChangeFunc(aq)
 return Target
 end
 end
 
-return ao end function a.ag():typeof(__modImpl())local aa=a.cache.ag if not aa then aa={c=__modImpl()}a.cache.ag=aa end return aa.c end end do local function __modImpl()
+return ao 
+end function a.ag():typeof(__modImpl())local aa=a.cache.ag if not aa then aa={c=__modImpl()}a.cache.ag=aa end return aa.c end end do local function __modImpl()
 
 local aa={}
 
@@ -37821,6 +38300,227 @@ return aq
 end
 
 return ae end function a.aj():typeof(__modImpl())local aa=a.cache.aj if not aa then aa={c=__modImpl()}a.cache.aj=aa end return aa.c end end do local function __modImpl()
+local Creator = a.j()
+local InputService = game:GetService("UserInputService")
+local Settings = {}
+local Supported = { Toggle = true, Input = true, Slider = true, Dropdown = true, Keybind = true, Colorpicker = true, Button = true }
+
+local function Copy(Value)
+    if type(Value) ~= "table" or typeof(Value) == "Color3" then return Value end
+    local Result = {}
+    for Key, Item in pairs(Value) do Result[Key] = Copy(Item) end
+    return Result
+end
+local function Equal(Left, Right)
+    if typeof(Left) == "Color3" and typeof(Right) == "Color3" then return Left.R == Right.R and Left.G == Right.G and Left.B == Right.B end
+    if type(Left) ~= type(Right) then return false end
+    if type(Left) ~= "table" then return Left == Right end
+    for Key, Value in pairs(Left) do if not Equal(Value, Right[Key]) then return false end end
+    for Key in pairs(Right) do if Left[Key] == nil then return false end end
+    return true
+end
+local function Snapshot(Element)
+    local Value = Element.Value
+    if Element.Keybind and Element.Keybind.Down and Element.Keybind.Options.Mode == "Hold" and Element.Keybind.HoldValue ~= nil then Value = Element.Keybind.HoldValue end
+    if Element.__type == "Slider" then Value = tonumber(Element.Value.Default)
+    elseif Element.__type == "Colorpicker" then Value = { Color = Element.Default, Transparency = Element.Transparency or 0 }
+    elseif Element.__type == "Button" then Value = nil end
+    return Copy({ Value = Value, Keybind = Element.Keybind and Element.Keybind.Value })
+end
+local function Inside(Object, Input)
+    if not Object or not Input.Position then return false end
+    local Position, Size, Point = Object.AbsolutePosition, Object.AbsoluteSize, Input.Position
+    return Point.X >= Position.X and Point.X <= Position.X + Size.X and Point.Y >= Position.Y and Point.Y <= Position.Y + Size.Y
+end
+
+function Settings.Setup(Window)
+    if Window._SettingHistory then return Window._SettingHistory end
+    local History = { Window = Window, States = {}, Entries = {}, Suspended = 0, Limit = 50 }
+    Window._SettingHistory = History
+
+    function History:Push(Changes, Title)
+        if self.Suspended > 0 or Window.Destroyed or #Changes == 0 then return end
+        local Last = self.Entries[#self.Entries]
+        if #Changes == 1 and Last and #Last.Changes == 1 and Last.Changes[1].Element == Changes[1].Element
+            and self.Pointer and Last.Gesture == self.Pointer then
+            Last.Changes[1].After = Copy(Changes[1].After)
+            if Equal(Last.Changes[1].Before, Last.Changes[1].After) then table.remove(self.Entries) end
+            return
+        end
+        table.insert(self.Entries, { Changes = Changes, Title = Title, Gesture = self.Pointer })
+        if #self.Entries > self.Limit then table.remove(self.Entries, 1) end
+    end
+    function History:Commit(Element)
+        local State = self.States[Element]
+        if not State or not State.Alive then return end
+        local After = Snapshot(Element)
+        if Equal(State.Last, After) then return end
+        local Before = State.Last
+        State.Last = Copy(After)
+        if self.Suspended > 0 then return end
+        if self.GroupChanges then
+            local Change = self.GroupChanges[Element]
+            if Change then Change.After = Copy(After)
+            else self.GroupChanges[Element] = { Element = Element, Before = Copy(Before), After = Copy(After) } end
+        else self:Push({ { Element = Element, Before = Copy(Before), After = Copy(After) } }, Element.Title) end
+    end
+    function History:Group(Title, Callback)
+        if self.GroupChanges then return Callback() end
+        self.GroupChanges = {}
+        local Result = table.pack(pcall(Callback))
+        local Changes = {}
+        for _, Change in pairs(self.GroupChanges) do if not Equal(Change.Before, Change.After) then table.insert(Changes, Change) end end
+        self.GroupChanges = nil
+        self:Push(Changes, Title)
+        if not Result[1] then error(Result[2], 0) end
+        return table.unpack(Result, 2, Result.n)
+    end
+    function History:Restore(Element, Data)
+        if Element.__type == "Dropdown" then Element:Select(Copy(Data.Value))
+        elseif Element.__type == "Colorpicker" then
+            Element:Update(Data.Value.Color, Data.Value.Transparency)
+            if Element.Callback then Creator.SafeCallback(Element.Callback, Data.Value.Color, Data.Value.Transparency) end
+        elseif Element.__type ~= "Button" then Element:Set(Copy(Data.Value)) end
+        if Data.Keybind ~= nil and Element.Keybind then Element.Keybind:Set(Data.Keybind) end
+        self:Commit(Element)
+    end
+    function History:Reset(Element)
+        local State = self.States[Element]
+        if not State or not State.Alive or Element.Locked then return false end
+        local Before = Snapshot(Element)
+        self.Suspended += 1
+        local Success, Message = pcall(function() self:Restore(Element, State.Initial) end)
+        self.Suspended -= 1
+        if not Success then return false, Message end
+        local After = Snapshot(Element)
+        State.Last = Copy(After)
+        if not Equal(Before, After) then self:Push({ { Element = Element, Before = Before, After = After } }, "Reset " .. tostring(Element.Title)) end
+        return true
+    end
+    function History:Undo()
+        local Entry = self.Entries[#self.Entries]
+        if not Entry then return false, "No changes to undo" end
+        for _, Change in ipairs(Entry.Changes) do
+            local State = self.States[Change.Element]
+            if not State or not State.Alive or Change.Element.Locked then return false, "The setting is unavailable or locked" end
+        end
+        self.Suspended += 1
+        local Success, Message = pcall(function()
+            for Index = #Entry.Changes, 1, -1 do self:Restore(Entry.Changes[Index].Element, Entry.Changes[Index].Before) end
+        end)
+        self.Suspended -= 1
+        if not Success then return false, Message end
+        table.remove(self.Entries)
+        return true, Entry.Title
+    end
+    function History:Clear()
+        table.clear(self.Entries)
+        for Element, State in pairs(self.States) do if State.Alive then State.Last = Snapshot(Element) end end
+    end
+    function History:CloseMenu()
+        if self.Menu then self.Menu:Destroy(); self.Menu = nil end
+        if self.MenuInput then self.MenuInput:Disconnect(); self.MenuInput = nil end
+    end
+    function History:OpenMenu(Element, Input)
+        self:CloseMenu()
+        if Element.Locked or Window.Destroyed then return end
+        local Main = Window.UIElements.Main
+        local Scale = math.max(tonumber(Window.GetUIScale and Window:GetUIScale()) or 1, 0.01)
+        local Position, Size = Main.AbsolutePosition, Main.AbsoluteSize
+        local X = math.clamp((Input.Position.X - Position.X) / Scale, 0, math.max(0, Size.X / Scale - 166))
+        local Y = math.clamp((Input.Position.Y - Position.Y) / Scale, 0, math.max(0, Size.Y / Scale - 66))
+        local Menu = Creator.New("Frame", {
+            Name = "SettingActions", Size = UDim2.fromOffset(166, 66), Position = UDim2.fromOffset(X, Y),
+            BackgroundTransparency = 0.04, ZIndex = 200, ThemeTag = { BackgroundColor3 = "Dialog" }, Parent = Main,
+        }, {
+            Creator.New("UICorner", { CornerRadius = UDim.new(0, 6) }),
+            Creator.New("UIStroke", { Thickness = 1, Transparency = 0.7, ThemeTag = { Color = "Outline" } }),
+        })
+        self.Menu = Menu
+        local function Action(Text, Index, Callback, Enabled)
+            local Button = Creator.New("TextButton", {
+                Text = Text, Size = UDim2.new(1, -8, 0, 28), Position = UDim2.fromOffset(4, 4 + Index * 30),
+                TextSize = 12, TextXAlignment = "Left", TextTransparency = Enabled and 0 or 0.6,
+                FontFace = Font.new(Creator.Font, Enum.FontWeight.Regular), BackgroundTransparency = 1,
+                AutoButtonColor = false, ZIndex = 201, Active = Enabled, ThemeTag = { TextColor3 = "Text", BackgroundColor3 = "ElementBackground" }, Parent = Menu,
+            }, { Creator.New("UICorner", { CornerRadius = UDim.new(0, 4) }), Creator.New("UIPadding", { PaddingLeft = UDim.new(0, 8) }) })
+            Creator.AddSignal(Button.MouseEnter, function() if Enabled then Button.BackgroundTransparency = 0.9 end end)
+            Creator.AddSignal(Button.MouseLeave, function() Button.BackgroundTransparency = 1 end)
+            Creator.AddSignal(Button.Activated, function() self:CloseMenu(); if Enabled then Callback() end end)
+        end
+        Action("Reset setting", 0, function() self:Reset(Element) end, true)
+        Action("Undo last change", 1, function() self:Undo() end, #self.Entries > 0)
+        self.MenuInput = InputService.InputBegan:Connect(function(NextInput)
+            if NextInput == Input then return end
+            if NextInput.KeyCode == Enum.KeyCode.Escape or (NextInput.UserInputType == Enum.UserInputType.MouseButton1 or NextInput.UserInputType == Enum.UserInputType.MouseButton2 or NextInput.UserInputType == Enum.UserInputType.Touch) and not Inside(Menu, NextInput) then self:CloseMenu() end
+        end)
+    end
+    function History:Track(Element, Options)
+        Options = Options or {}
+        if Options.History == false or not Supported[Element.__type] or Element.__type == "Button" and not Element.Keybind or self.States[Element] then return end
+        local State = { Initial = Snapshot(Element), Last = Snapshot(Element), Alive = true }
+        self.States[Element] = State
+        local function Wrap(Object, Method)
+            local Original = Object and Object[Method]
+            if type(Original) ~= "function" then return end
+            Object[Method] = function(Self, ...)
+                local Result = table.pack(Original(Self, ...))
+                History:Commit(Element)
+                return table.unpack(Result, 1, Result.n)
+            end
+        end
+        for _, Method in ipairs({ "Set", "Select", "Update", "_SyncKeybindListValue" }) do Wrap(Element, Method) end
+        Wrap(Element.Keybind or Element._KeybindRecord, "Set")
+        local Callback = Element.Callback
+        if type(Callback) == "function" then
+            Element.Callback = function(...)
+                History:Commit(Element)
+                local Result = table.pack(Callback(...))
+                History:Commit(Element)
+                return table.unpack(Result, 1, Result.n)
+            end
+        end
+        function Element:Reset() return History:Reset(self) end
+        function Element:GetDefault() return Copy(State.Initial.Value) end
+        if Element.ElementFrame then
+            if Options.ContextMenu ~= false then
+                Creator.AddSignal(Element.ElementFrame.InputBegan, function(Input)
+                    local Picker = Element.Keybind and Element.Keybind.Button or Element.__type == "Keybind" and Element.UIElements.Keybind
+                    if Input.UserInputType == Enum.UserInputType.MouseButton2 and not Inside(Picker, Input) then History:OpenMenu(Element, Input) end
+                end)
+            end
+            Creator.AddSignal(Element.ElementFrame.Destroying, function()
+                State.Alive = false
+                History.States[Element] = nil
+                for Index = #History.Entries, 1, -1 do
+                    for _, Change in ipairs(History.Entries[Index].Changes) do if Change.Element == Element then table.remove(History.Entries, Index); break end end
+                end
+                History:CloseMenu()
+            end)
+        end
+    end
+    function Window:UndoLastChange() return History:Undo() end
+    function Window:CanUndo() return #History.Entries > 0 end
+    function Window:ResetSetting(Element) return History:Reset(Element) end
+    local Began = InputService.InputBegan:Connect(function(Input)
+        if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then History.Pointer = Input end
+    end)
+    local Ended = InputService.InputEnded:Connect(function(Input)
+        if Input == History.Pointer or Input.UserInputType == Enum.UserInputType.MouseButton1 then History.Pointer = nil end
+    end)
+    local Focus = InputService.WindowFocusReleased:Connect(function() History.Pointer = nil; History:CloseMenu() end)
+    Creator.AddSignal(Window.UIElements.Main.Destroying, function()
+        Began:Disconnect(); Ended:Disconnect(); Focus:Disconnect()
+        History:CloseMenu()
+        table.clear(History.Entries); table.clear(History.States)
+    end)
+    return History
+end
+
+return Settings
+
+end function a.al():typeof(__modImpl())local aa=a.cache.al if not aa then aa={c=__modImpl()}a.cache.al=aa end return aa.c end end do local function __modImpl()
+
 local aa=(cloneref or clonereference or function(aa)
 return aa
 end)
@@ -37850,6 +38550,7 @@ if at.Font~=nil then al.UpdateFont(at.Font)end
 if at.TextSize~=nil then al.UpdateTextSize(at.TextSize)end
 local au={
 Title=at.Title or"UI Library",
+WindUI=at.WindUI,
 Author=at.Author,
 Icon=at.Icon,
 IconSize=at.IconSize or 22,
@@ -37879,11 +38580,11 @@ Radius=at.Radius or 8,
 Transparent=at.Transparent or false,
 HideSearchBar=at.HideSearchBar~=false,
 ScrollBarEnabled=at.ScrollBarEnabled or false,
-SideBarWidth=tonumber(at.SideBarWidth)or 200,
+SideBarWidth=tonumber(at.SideBarWidth)or 240,
 SideBarGap=math.max(0,tonumber(at.SideBarGap)or 12),
 ResizableSideBar=at.ResizableSideBar~=false,
 MinContentWidth=math.max(120,tonumber(at.MinContentWidth)or 300),
-_SideBarRequestedWidth=tonumber(at.SideBarWidth)or 200,
+_SideBarRequestedWidth=tonumber(at.SideBarWidth)or 240,
 Acrylic=false,
 NewElements=at.NewElements or false,
 IgnoreAlerts=at.IgnoreAlerts or false,
@@ -38668,12 +39369,14 @@ PaddingBottom=UDim.new(0,6),
 }),
 })a.C()
 
-.Window(au,at,aA)a.E()
+.Window(au,at,aA)
+a.al().Setup(au)
+a.E()
 .Setup(au)a.F()
 .New(au,at.StatsBar)
 function au.RefreshAuxiliaryUI(x)
 x:_ReflowSidebar()
-if x.Closed or x.Destroyed then x:_StopSideBarDrag()end
+if x.Closed or x.Destroyed then x:_StopSideBarDrag();if x._SettingHistory then x._SettingHistory:CloseMenu()end end
 if x._KeybindRouter then x._KeybindRouter:RefreshVisibility()end
 x.StatsBar:RefreshVisibility()
 x:_RefreshAppearanceVisibility()
@@ -39087,6 +39790,7 @@ if C.IsFullscreen then C:ToggleFullscreen()end
 C:SetSize(C._DefaultSize)
 C:SetSideBarGap(C._DefaultSideBarGap)
 C:SetSideBarWidth(C._DefaultSideBarWidth)
+C:ResetKeybindListPosition()
 C:RefreshAuxiliaryUI()
 return C
 end
@@ -40000,7 +40704,7 @@ local R=false
 
 
 
-local S=ao("Search","search",au.UIElements.SideBarContainer,true)
+local S=ao("Search...","search",au.UIElements.SideBarContainer,true)
 S.Size=UDim2.new(1,-au.UIPadding/2,0,39)
 S.Position=UDim2.new(0,au.UIPadding/2,0,0)
 
@@ -40067,6 +40771,7 @@ end
 
 return au
 end
+
 end function a.ak():typeof(__modImpl())local aa=a.cache.ak if not aa then aa={c=__modImpl()}a.cache.ak=aa end return aa.c end end end
 
 local aa={
