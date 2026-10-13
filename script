@@ -1,5 +1,5 @@
 --[[
-WindUI Fluent skin: customization build 21
+WindUI Fluent skin: customization build 22
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
@@ -11,7 +11,7 @@ Named config files, Advanced config-tab builder, inline keybind persistence and 
 Includes hover/drag listener cleanup and event-driven slider movement.
 Interface toggles can synchronize the keybind panel directly with Keybind = "UI".
 Hidden tabs, a draggable sidebar divider and font-measured, wrapping profile names.
-Hover-only sidebar grip, compact default width and manual resizing that keeps profile names wrapped.
+Centered hover-only sidebar divider, compact default width and manual resizing that keeps profile names wrapped.
 SelectTab is available automatically after creating the window and accepts tab objects.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
@@ -38058,6 +38058,7 @@ C.UIElements.SideBarContainer.Size=UDim2.new(0,C.SideBarWidth,1,
 C.UIElements.MainBar.Size=UDim2.new(1,-C.SideBarWidth-Gap,1,-C.Topbar.Height)
 if C.UIElements.SideBarResizeHandle then
 C.UIElements.SideBarResizeHandle.Position=UDim2.new(0,C.SideBarWidth+Gap/2,0,C.Topbar.Height)
+C.UIElements.SideBarResizeHandle.Size=UDim2.new(0,18,1,-C.Topbar.Height-C.UIPadding/2)
 end
 if C.User.Reflow then C.User:Reflow()end
 end
@@ -38090,17 +38091,20 @@ if C._PaintSideBarGrip then C:_PaintSideBarGrip()end
 end
 au._SideBarDragToken=at.WindUI.GenerateGUID()
 au.UIElements.SideBarResizeHandle=am("TextButton",{
-Name="SideBarResizeHandle",Size=UDim2.new(0,18,1,-au.Topbar.Height),
+Name="SideBarResizeHandle",Size=UDim2.new(0,18,1,-au.Topbar.Height-au.UIPadding/2),
 Position=UDim2.new(0,au.SideBarWidth+au.SideBarGap/2,0,au.Topbar.Height),
 AnchorPoint=Vector2.new(0.5,0),BackgroundTransparency=1,Active=true,Selectable=false,
 AutoButtonColor=false,Text="",Visible=au.ResizableSideBar,ZIndex=120,
 },{am("Frame",{
-Name="Line",Size=UDim2.new(0,1,1,-au.UIPadding),Position=UDim2.new(0.5,0,0,au.UIPadding/2),
+Name="Line",Size=UDim2.new(0,1,1,0),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),
 BackgroundTransparency=1,ThemeTag={BackgroundColor3="Text"},ZIndex=121,
-}),am("Frame",{
-Name="Grip",Size=UDim2.fromOffset(3,22),Position=UDim2.fromScale(0.5,0.5),
-AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=1,ThemeTag={BackgroundColor3="Text"},ZIndex=122,
-},{am("UICorner",{CornerRadius=UDim.new(0,2)})})})
+},{am("UIGradient",{
+Rotation=90,
+Transparency=NumberSequence.new({
+NumberSequenceKeypoint.new(0,1),NumberSequenceKeypoint.new(0.18,0.25),
+NumberSequenceKeypoint.new(0.5,0),NumberSequenceKeypoint.new(0.82,0.25),NumberSequenceKeypoint.new(1,1),
+}),
+})})})
 au._SideBarGripState=0
 function au._PaintSideBarGrip(C)
 local Handle=C.UIElements.SideBarResizeHandle
@@ -38115,14 +38119,12 @@ for _,Tween in ipairs(C._SideBarGripTweens or{})do Tween:Cancel()end
 C._SideBarGripTweens={}
 if C._SideBarHandleDestroying then return end
 local Duration=State==0 and 0.18 or 0.14
-local Line=an(Handle.Line,Duration,{BackgroundTransparency=State==2 and 0.94 or State==1 and 0.97 or 1},Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
-local Grip=an(Handle.Grip,Duration,{
-BackgroundTransparency=State==2 and 0.68 or State==1 and 0.82 or 1,
-Size=UDim2.fromOffset(3,State==2 and 32 or State==1 and 28 or 22),
+local Line=an(Handle.Line,Duration,{
+BackgroundTransparency=State==2 and 0.78 or State==1 and 0.9 or 1,
+Size=UDim2.new(0,State==2 and 2 or 1,1,0),
 },Enum.EasingStyle.Quad,Enum.EasingDirection.Out)
-C._SideBarGripTweens={Line,Grip}
+C._SideBarGripTweens={Line}
 Line:Play()
-Grip:Play()
 end
 al.AddSignal(au.UIElements.SideBarResizeHandle.InputBegan,function(Input)
 if not au.ResizableSideBar or au.Closed or au.Destroyed then return end
