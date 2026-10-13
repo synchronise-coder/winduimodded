@@ -1,5 +1,5 @@
 --[[
-WindUI Fluent skin: customization build 25
+WindUI Fluent skin: customization build 26
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
 Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
 Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
@@ -18,6 +18,7 @@ Config autoload, unique names, renaming, duplication and favorites; per-setting 
 Wider sidebar with top-right role and optional partial name masking.
 Generated config-name families preserve literal names; synchronized keybind filter and accent separator.
 Six-second grouped Undo controls and a smooth hollow border-glow texture with cached local loading.
+Supported filter icon and bundled fallbacks for keybind-header and Undo icons.
 Full bundled source; no upstream WindUI loader or runtime source patcher.
 
 MIT License
@@ -30333,7 +30334,7 @@ BackgroundTransparency=1,TextXAlignment="Left",TextTruncate="AtEnd",FontFace=Fon
 ah.ClearAll=aa.New("TextButton",{Name="ClearKeybinds",Text="",Size=UDim2.fromOffset(22,22),
 Position=UDim2.new(1,-8,0,3),AnchorPoint=Vector2.new(1,0),BackgroundTransparency=1,AutoButtonColor=false,
 ThemeTag={BackgroundColor3="ElementBackground"},Parent=ag.List},{aa.New("UICorner",{CornerRadius=UDim.new(0,4)})})
-local Icon=aa.Icon("lucide:eraser")
+local Icon=aa.Icon("lucide:eraser")or{a.b().eraser,{ImageRectSize=Vector2.new(0,0),ImageRectPosition=Vector2.new(0,0)}}
 ah.ClearIcon=aa.New("ImageLabel",{Image=Icon[1],ImageRectSize=Icon[2].ImageRectSize,ImageRectOffset=Icon[2].ImageRectPosition,
 Size=UDim2.fromOffset(13,13),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=1,
 ThemeTag={ImageColor3="Placeholder"},Parent=ah.ClearAll})
@@ -30350,7 +30351,7 @@ aa.AddSignal(ah.ClearAll.Activated,function()ah:ClearBindings(false)end)
 ah.FilterButton=aa.New("TextButton",{Name="FilterCurrentTab",Text="",Size=UDim2.fromOffset(22,22),Position=UDim2.new(1,-35,0,3),
 AnchorPoint=Vector2.new(1,0),BackgroundTransparency=1,AutoButtonColor=false,ThemeTag={BackgroundColor3="Accent"},Parent=ag.List},
 {aa.New("UICorner",{CornerRadius=UDim.new(0,4)})})
-local FilterAsset=aa.Icon("lucide:filter")
+local FilterAsset=aa.Icon("lucide:funnel")or{a.b().funnel,{ImageRectSize=Vector2.new(0,0),ImageRectPosition=Vector2.new(0,0)}}
 ah.FilterIcon=aa.New("ImageLabel",{Image=FilterAsset[1],ImageRectSize=FilterAsset[2].ImageRectSize,ImageRectOffset=FilterAsset[2].ImageRectPosition,
 Size=UDim2.fromOffset(12,12),Position=UDim2.fromScale(0.5,0.5),AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=1,
 ThemeTag={ImageColor3="Placeholder"},Parent=ah.FilterButton})
@@ -38473,7 +38474,9 @@ function Settings.Setup(Window)
             Creator.New("UICorner", { CornerRadius = UDim.new(0, 4) }),
             Creator.New("UIStroke", { Thickness = 1, Transparency = 0.82, ThemeTag = { Color = "Accent" } }),
         })
-        local Icon = Creator.Icon("lucide:undo-2")
+        local Icon = Creator.Icon("lucide:undo-2") or {
+            a.b()["undo-2"], { ImageRectSize = Vector2.new(0, 0), ImageRectPosition = Vector2.new(0, 0) },
+        }
         Creator.New("ImageLabel", {
             Image = Icon[1], ImageRectSize = Icon[2].ImageRectSize, ImageRectOffset = Icon[2].ImageRectPosition,
             Size = UDim2.fromOffset(11, 11), Position = UDim2.new(0, 7, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5),
