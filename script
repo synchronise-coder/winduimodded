@@ -1,6 +1,19 @@
 --[[
+WindUI Fluent skin: customization build 20
 Based on WindUI v1.6.66, source revision 7dd8a34a6bb59635c7b5f18ce9d46558a8cde138.
-made by @synchronisee
+Code-configured font/text settings, centered keybind rows, functioning top stats and exterior-only border glow.
+Fluent dropdowns, slider fill/thumb glow and editable profile handle/avatar/role/expiry. Acrylic removed.
+Content-only text size; fixed window/HUD/profile/keybind text, linked panel opacity and pinned panel toggle row, measured profile padding and automatic cached repository font download and local custom fonts.
+Large text stays inside the scrolling body; bounded header labels, font-measured stats and top-aligned side keybind panel.
+Tag background transparency is configurable in code and through Tag:SetTransparency; text and icons stay visible.
+Shared standalone/inline keybind routing, drag-only movement listeners, viewport/modal cleanup and anonymous profile/stats.
+Named config files, Advanced config-tab builder, inline keybind persistence and interface restoration.
+Includes hover/drag listener cleanup and event-driven slider movement.
+Interface toggles can synchronize the keybind panel directly with Keybind = "UI".
+Hidden tabs, a draggable sidebar divider and font-measured, wrapping profile names.
+Visible sidebar grip, compact default width and manual resizing that keeps profile names wrapped.
+SelectTab is available automatically after creating the window and accepts tab objects.
+Full bundled source; no upstream WindUI loader or runtime source patcher.
 
 MIT License
 
@@ -28966,7 +28979,7 @@ function ConfigManager:CreateConfig(name, autoload)
             local router = window._KeybindRouter
             local key = router and router.VisibilityBind and router.VisibilityBind.Value
                 or (type(window.KeybindList) == "table" and window.KeybindList.ToggleKey)
-            saved.__window = { keybindListKey = key, keybindListVisible = window._KeybindListVisible, transparent = window.Transparent }
+            saved.__window = { keybindListKey = key, keybindListVisible = window._KeybindListVisible, transparent = window.Transparent, sidebarWidth = window._SideBarRequestedWidth or window.SideBarWidth, sidebarGap = window.SideBarGap }
             if window.GetUIScale then saved.__window.scale = window:GetUIScale() end
             local written, message = writefile(self.Path, HttpService:JSONEncode(saved))
             if written == false then error(message or "writefile failed") end
@@ -29024,6 +29037,8 @@ function ConfigManager:CreateConfig(name, autoload)
         local success, message = pcall(function()
             if appearance.keybindListKey and window.SetKeybindListKey then window:SetKeybindListKey(appearance.keybindListKey) end
             if appearance.keybindListVisible ~= nil and window.SetKeybindListVisible then window:SetKeybindListVisible(appearance.keybindListVisible) end
+            if type(appearance.sidebarWidth) == "number" and window.SetSideBarWidth then window:SetSideBarWidth(appearance.sidebarWidth) end
+            if type(appearance.sidebarGap) == "number" and window.SetSideBarGap then window:SetSideBarGap(appearance.sidebarGap) end
             if appearance.transparent ~= nil and window.ToggleTransparency then window:ToggleTransparency(appearance.transparent) end
             if appearance.scale and window.SetUIScale then window:SetUIScale(appearance.scale) end
         end)
@@ -29332,10 +29347,13 @@ local ah=ac.LocalPlayer
 local ai,aj=true,0
 local ak=tonumber(ag.Height)or 68
 local al
+local ExpiryPlain=""
+local Metrics={}
+local Measuring=false
 local am=aa.New("TextButton",{
 Name="UserProfile",Size=UDim2.new(0,af.SideBarWidth-af.UIPadding,0,ag.Height),
 Position=UDim2.new(0,af.UIPadding/2,1,-af.UIPadding/2),
-AnchorPoint=Vector2.new(0,1),BackgroundTransparency=1,Text="",Visible=ag.Enabled==true,
+AnchorPoint=Vector2.new(0,1),BackgroundTransparency=1,Text="",Visible=ag.Enabled==true,ZIndex=10,
 })
 aa.New("Frame",{Size=UDim2.new(1,-af.UIPadding,0,1),Position=UDim2.new(0,af.UIPadding/2,0,0),
 BackgroundTransparency=0.65,ThemeTag={BackgroundColor3="Outline"},Parent=am})
@@ -29350,22 +29368,22 @@ AnchorPoint=Vector2.new(0,0.5),BackgroundTransparency=1,Parent=am,
 })
 local ap=aa.New("TextLabel",{
 Name="DisplayName",Size=UDim2.new(1,0,0,18),TextSize=14,
-BackgroundTransparency=1,TextXAlignment="Left",TextTruncate="AtEnd",RichText=false,
+BackgroundTransparency=1,TextXAlignment="Left",TextTruncate="None",TextWrapped=true,RichText=false,
 FontFace=Font.new(aa.Font,Enum.FontWeight.Medium),ThemeTag={TextColor3="Text"},Parent=ao,
 })
 local aq=aa.New("TextLabel",{
 Name="Role",Size=UDim2.fromOffset(60,18),Position=UDim2.fromScale(1,0),AnchorPoint=Vector2.new(1,0),
-TextSize=10,TextTruncate="AtEnd",RichText=false,BackgroundTransparency=0.86,
+TextSize=10,TextTruncate="None",TextWrapped=true,RichText=false,BackgroundTransparency=0.86,
 FontFace=Font.new(aa.Font,Enum.FontWeight.Medium),Parent=ao,
 },{aa.New("UICorner",{CornerRadius=UDim.new(0,3)})})
 local ar=aa.New("TextLabel",{
 Name="UserName",Size=UDim2.new(1,0,0,16),Position=UDim2.fromOffset(0,20),
-TextSize=11,TextTruncate="AtEnd",RichText=false,BackgroundTransparency=1,TextXAlignment="Left",
+TextSize=11,TextTruncate="None",TextWrapped=true,RichText=false,BackgroundTransparency=1,TextXAlignment="Left",
 FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),ThemeTag={TextColor3="Placeholder"},Parent=ao,
 })
 local as=aa.New("TextLabel",{
 Name="Expires",Size=UDim2.new(1,0,0,16),Position=UDim2.fromOffset(0,38),
-TextSize=11,TextTruncate="AtEnd",RichText=true,BackgroundTransparency=1,TextXAlignment="Left",
+TextSize=11,TextTruncate="None",TextWrapped=true,RichText=true,BackgroundTransparency=1,TextXAlignment="Left",
 FontFace=Font.new(aa.Font,Enum.FontWeight.Regular),ThemeTag={TextColor3="Placeholder"},Parent=ao,
 })
 local function RefreshAvatar()
@@ -29401,34 +29419,115 @@ end
 task.defer(function()Fetch(1)end)
 end
 local at=false
-local function TextHeight(au,av)
-return math.max(av,math.ceil(au.TextBounds.Y)+4,au.TextSize+4)
+local function MetricKey(Label,Text,Width)
+local Face=Label.FontFace
+return table.concat({Text,Face.Family,tostring(Face.Weight),tostring(Face.Style),tostring(Label.TextSize),tostring(Width)},"\0")
+end
+local function Measure(Label,Width,Plain)
+local Text=Plain or Label.Text
+local Mode=Width and "Wrapped"or "Full"
+Width=Width and math.max(1,math.floor(Width))or 100000
+local Key=MetricKey(Label,Text,Width)
+local Cache=Metrics[Label]
+if not Cache then Cache={};Metrics[Label]=Cache end
+local Record=Cache[Mode]
+if not Record or Record.Key~=Key then
+local FullWidth=#Text*Label.TextSize*0.65
+local Lines=1
+for Line in (Text.."\n"):gmatch("(.-)\n")do
+Lines+=math.max(0,math.ceil(#Line*Label.TextSize*0.65/Width)-1)
+end
+local _,Breaks=Text:gsub("\n","")
+Lines+=Breaks
+Record={Key=Key,Text=Text,Font=Label.FontFace,Size=Label.TextSize,Width=Width,
+X=math.min(FullWidth,Width),Y=math.max(1,Lines)*Label.TextSize,Pending=true}
+Cache[Mode]=Record
+end
+if Record.Pending and not Measuring then
+Measuring=true
+task.defer(function()
+for LabelObject,Values in pairs(Metrics)do
+for ModeName,Value in pairs(Values)do
+if not ai or af.Destroyed then break end
+if not Value.Pending then continue end
+Value.Pending=false
+local Params
+local Success,Bounds=pcall(function()
+Params=Instance.new"GetTextBoundsParams"
+Params.Text,Params.Font,Params.Size=Value.Text,Value.Font,Value.Size
+Params.Width,Params.RichText=Value.Width,false
+return game:GetService"TextService":GetTextBoundsAsync(Params)
+end)
+if Params then Params:Destroy()end
+if Success and Bounds and Bounds.X==Bounds.X and Bounds.Y==Bounds.Y
+and Bounds.X>=0 and Bounds.X<math.huge and Bounds.Y>=0 and Bounds.Y<math.huge
+and Values[ModeName]==Value then Value.X,Value.Y=Bounds.X,Bounds.Y end
+end
+end
+Measuring=false
+if ai and not af.Destroyed then ag:Reflow()end
+end)
+end
+return Record.X,Record.Y
+end
+local function LineHeight(Label,Width,Minimum,Plain)
+local _,Height=Measure(Label,Width,Plain)
+return math.max(Minimum,math.ceil(Height)+4,Label.TextSize+4)
 end
 local function ResizeRole()
-if at or not ai then return end
+if at or not ai or af.Destroyed then return end
 at=true
-local au=aq.Visible and math.clamp(math.max(aq.TextBounds.X,#aq.Text*aq.TextSize*0.5)+10,24,96)or 0
-local av=math.max(TextHeight(ap,18),aq.Visible and TextHeight(aq,18)or 0)
-local aw=TextHeight(ar,16)
-local ax=TextHeight(as,16)
-aq.Size=UDim2.fromOffset(au,av)
-ap.Size=UDim2.new(1,au>0 and-au-5 or 0,0,av)
-local ay=av
-ar.Position=UDim2.fromOffset(0,ay+3)
-ar.Size=UDim2.new(1,0,0,aw)
-if ar.Visible then ay+=aw+3 end
-as.Position=UDim2.fromOffset(0,ay+3)
-as.Size=UDim2.new(1,0,0,ax)
-if as.Visible then ay+=ax+3 end
-ao.Size=UDim2.new(1,ag.ShowAvatar==false and-14 or-58,0,ay)
-ao.Position=UDim2.new(0,ag.ShowAvatar==false and 7 or 51,0.5,0)
-ag.Height=math.max(ak,ay+16)
+local Padding=math.clamp(tonumber(ag.Padding)or 7,0,24)
+local Gap=math.clamp(tonumber(ag.Gap)or 8,0,24)
+local AvatarSize=math.clamp(tonumber(ag.AvatarSize)or 36,18,72)
+local HasAvatar=ag.ShowAvatar~=false
+local Left=Padding+(HasAvatar and AvatarSize+Gap or 0)
+local DetailsWidth=math.max(24,af.SideBarWidth-af.UIPadding-Left-Padding)
+local NameWidth=Measure(ap)
+local UsernameWidth=ar.Visible and Measure(ar)or 0
+local RoleWidth=aq.Visible and Measure(aq)+10 or 0
+local ExpiryWidth=as.Visible and Measure(as,nil,ExpiryPlain)or 0
+ag.RequiredWidth=math.ceil(math.max(NameWidth,UsernameWidth,ExpiryWidth,RoleWidth)
++Left+Padding+af.UIPadding)
+local InlineRole=aq.Visible and NameWidth+RoleWidth+Gap<=DetailsWidth
+local NameSpace=math.max(24,DetailsWidth-(InlineRole and RoleWidth+Gap or 0))
+local NameHeight=LineHeight(ap,NameSpace,18)
+local BadgeWidth=math.min(DetailsWidth,math.max(24,RoleWidth))
+local BadgeHeight=aq.Visible and LineHeight(aq,BadgeWidth-10,18)or 0
+ap.Size=UDim2.fromOffset(NameSpace,NameHeight)
+aq.Size=UDim2.fromOffset(BadgeWidth,BadgeHeight)
+local Height=math.max(NameHeight,InlineRole and BadgeHeight or 0)
+if InlineRole then
+aq.Position=UDim2.new(1,0,0,0)
+aq.AnchorPoint=Vector2.new(1,0)
+end
+if ar.Visible then
+local RowHeight=LineHeight(ar,DetailsWidth,16)
+ar.Position=UDim2.fromOffset(0,Height+3)
+ar.Size=UDim2.fromOffset(DetailsWidth,RowHeight)
+Height+=RowHeight+3
+end
+if aq.Visible and not InlineRole then
+aq.Position=UDim2.fromOffset(0,Height+3)
+aq.AnchorPoint=Vector2.new(0,0)
+Height+=BadgeHeight+3
+end
+if as.Visible then
+local RowHeight=LineHeight(as,DetailsWidth,16,ExpiryPlain)
+as.Position=UDim2.fromOffset(0,Height+3)
+as.Size=UDim2.fromOffset(DetailsWidth,RowHeight)
+Height+=RowHeight+3
+end
+ao.Size=UDim2.fromOffset(DetailsWidth,Height)
+ao.Position=UDim2.new(0,Left,0.5,0)
+an.Size=UDim2.fromOffset(AvatarSize,AvatarSize)
+an.Position=UDim2.new(0,Padding,0.5,0)
+ag.Height=math.max(ak,Height+Padding*2+4,HasAvatar and AvatarSize+Padding*2+4 or 0)
 am.Size=UDim2.new(0,af.SideBarWidth-af.UIPadding,0,ag.Height)
-if ag.Enabled then
-af.UIElements.SideBarContainer.Size=UDim2.new(0,af.SideBarWidth,1,-af.Topbar.Height-ag.Height-af.UIPadding)
-end
 at=false
+if af._ReflowSidebar then af:_ReflowSidebar()end
 end
+function ag.Reflow()ResizeRole();return ag end
 local function RefreshExpiry()
 local au=ag.Expires
 if type(au)=="function"then
@@ -29436,14 +29535,19 @@ local av,aw=pcall(au)
 if av then au=aw else au="Unavailable"end
 end
 local av=ad.FormatExpiry(au)
+ExpiryPlain=av and tostring(ag.ExpiresLabel or"Expires:").." "..av or""
 local aw=as.Visible
 as.Visible=av~=nil
 local ax=ab.Color(ag.ExpiresColor,ab.Accent(af,nil,"Accent"))
 local ay=av and Escape(ag.ExpiresLabel or"Expires:")..' <font color="#'..ax:ToHex()..'">'..Escape(av)..'</font>'or""
 if as.Text~=ay then as.Text=ay end
-if aw~=as.Visible then ResizeRole()end
+ResizeRole()
 end
 function ag.Refresh(au)
+ap.TextSize=math.clamp(tonumber(au.NameTextSize)or 14,8,24)
+ar.TextSize=math.clamp(tonumber(au.UsernameTextSize)or 11,8,22)
+aq.TextSize=math.clamp(tonumber(au.RoleTextSize)or 10,8,20)
+as.TextSize=math.clamp(tonumber(au.ExpiresTextSize)or 11,8,22)
 ap.Text=au.Anonymous and"Anonymous"or tostring(au.Name or au.DisplayName or ah.DisplayName)
 local av=au.Username
 if type(av)=="function"then local aw,ax=pcall(av);av=aw and ax or nil end
@@ -29473,6 +29577,8 @@ end)
 end
 function ag.Update(au,av)
 for aw,ax in pairs(av or{})do au[aw]=ax end
+if av and av.AutoWidth~=nil then af._SideBarManualWidth=false end
+if av and av.Height~=nil then ak=math.max(0,tonumber(av.Height)or 68)end
 au:Refresh()
 if av and av.Enabled~=nil then
 if au.Enabled then au:Enable()else au:Disable()end
@@ -29492,16 +29598,18 @@ function ag.SetAnonymous(au,av)au.Anonymous=av~=false;au:Refresh();if af.StatsBa
 function ag.Enable(au)
 au.Enabled=true
 am.Visible=true
-af.UIElements.SideBarContainer.Size=UDim2.new(0,af.SideBarWidth,1,-af.Topbar.Height-au.Height-af.UIPadding)
 au:Refresh()
+if af._ReflowSidebar then af:_ReflowSidebar()end
+return au
 end
 function ag.Disable(au)
 au.Enabled=false
 am.Visible=false
-af.UIElements.SideBarContainer.Size=UDim2.new(0,af.SideBarWidth,1,-af.Topbar.Height)
+if af._ReflowSidebar then af:_ReflowSidebar()end
+return au
 end
 for au,av in ipairs{ap,aq,ar,as}do
-aa.AddSignal(av:GetPropertyChangedSignal"TextBounds",ResizeRole)
+aa.AddSignal(av:GetPropertyChangedSignal"Text",ResizeRole)
 aa.AddSignal(av:GetPropertyChangedSignal"FontFace",ResizeRole)
 aa.AddSignal(av:GetPropertyChangedSignal"TextSize",ResizeRole)
 end
@@ -36083,6 +36191,7 @@ at.UIScale=ao
 at.ElementsModule=an local
 
 au, av=ar:New(at)
+av.Tab=at.Tab
 
 if at.Flag and typeof(at.Flag)=="string"then
 av.Flag=at.Flag
@@ -36245,6 +36354,8 @@ IconColor=ap.IconColor,
 IconShape=ap.IconShape,
 IconThemed=ap.IconThemed,
 Locked=ap.Locked,
+Hidden=ap.Hidden==true or ap.hidden==true,
+SidebarSection=ap.SidebarSection,
 ShowTabTitle=ap.ShowTabTitle,
 TabTitleAlign=ap.TabTitleAlign or"Left",
 CustomEmptyPage=(ap.CustomEmptyPage and next(ap.CustomEmptyPage)~=nil)and ap.CustomEmptyPage
@@ -36286,6 +36397,7 @@ ar.Index=as
 
 ar.UIElements.Main=ak.NewRoundFrame(ar.UICorner,"Squircle",{
 BackgroundTransparency=1,
+Visible=not ar.Hidden,Active=not ar.Hidden,Selectable=not ar.Hidden,
 Size=UDim2.new(1,-7,0,0),
 AutomaticSize="Y",
 Parent=ap.Parent,
@@ -36550,7 +36662,7 @@ ao.Tabs[as]=ar
 ar.ContainerFrame=ar.UIElements.ContainerFrameCanvas
 
 ak.AddSignal(ar.UIElements.Main.MouseButton1Click,function()
-if not ar.Locked then
+if not ar.Locked and not ar.Hidden then
 ao:SelectTab(as)
 end
 end)
@@ -36573,6 +36685,7 @@ local az=false
 
 if ar.Desc then
 ak.AddSignal(ar.UIElements.Main.InputBegan,function()
+if ar.Hidden then return end
 az=true
 ax=task.spawn(function()
 task.wait(0.35)
@@ -36595,7 +36708,7 @@ end)
 end
 
 ak.AddSignal(ar.UIElements.Main.MouseEnter,function()
-if not ar.Locked then
+if not ar.Locked and not ar.Hidden then
 ak.SetThemeTag(ar.UIElements.Main.Frame,{
 ImageTransparency="TabBackgroundHoverTransparency",
 ImageColor3="TabBackgroundHover",
@@ -36619,7 +36732,7 @@ aw=nil
 end
 end
 
-if not ar.Locked then
+if not ar.Locked and not ar.Hidden then
 ak.SetThemeTag(ar.UIElements.Main.Frame,{
 ImageTransparency="TabBorderTransparency",
 },0.1)
@@ -36705,7 +36818,21 @@ return b
 end
 
 function ar.Select(aB)
-return ao:SelectTab(ar.Index)
+return ao:SelectTab(ar)
+end
+function ar.SetHidden(aB,Hidden)
+ar.Hidden=Hidden==true
+ar.UIElements.Main.Visible=not ar.Hidden
+ar.UIElements.Main.Active=not ar.Hidden
+ar.UIElements.Main.Selectable=not ar.Hidden
+if ar.Hidden then
+az=false
+if ax then task.cancel(ax);ax=nil end
+if ay then ay:Disconnect();ay=nil end
+if aw then aw:Close();aw=nil end
+end
+if ar.SidebarSection then ar.SidebarSection:RefreshTabs()end
+return ar
 end
 
 task.spawn(function()
@@ -36784,7 +36911,14 @@ ao.OnChangeFunc=aq
 end
 
 function ao.SelectTab(ap,aq)
-if not ao.Tabs[aq].Locked then
+if type(aq)=="table"then
+if ao.Tabs[aq.Index]~=aq then return false end
+aq=aq.Index
+end
+if type(aq)~="number"then return false end
+local Target=ao.Tabs[aq]
+if not Target or Target.Locked then return false end
+if not Target.Locked then
 ao.SelectedTab=aq
 
 for ar,as in next,ao.Tabs do
@@ -36843,6 +36977,7 @@ at:Play()
 end)
 
 ao.OnChangeFunc(aq)
+return Target
 end
 end
 
@@ -36868,6 +37003,7 @@ HeaderSize=42,
 IconSize=18,
 
 Expandable=false,
+Tabs={},
 }
 
 local as
@@ -36966,15 +37102,23 @@ VerticalAlignment="Bottom",
 })
 
 
+function ar.RefreshTabs()
+local VisibleCount=0
+for _,Tab in ipairs(ar.Tabs)do if not Tab.Hidden then VisibleCount+=1 end end
+ar.Expandable=VisibleCount>0
+at.Visible=ar.Expandable
+au.Visible=#ar.Tabs==0 or VisibleCount>0
+if ar.Opened and ar.Expandable then ar:Open()end
+return ar
+end
 function ar.Tab(av,aw)
-if not ar.Expandable then
-ar.Expandable=true
-at.Visible=true
-end
 aw.Parent=au.Content
-return al.New(aw,ap)
+aw.SidebarSection=ar
+local Tab=al.New(aw,ap)
+table.insert(ar.Tabs,Tab)
+ar:RefreshTabs()
+return Tab
 end
-
 function ar.Open(av)
 if ar.Expandable then
 ar.Opened=true
@@ -37020,6 +37164,7 @@ end
 
 
 
+ar.UIElements={Main=au,Content=au.Content}
 return ar
 end
 
@@ -37425,6 +37570,7 @@ end
 
 local ax={}
 for ay,az in next,am.Tabs do
+if az.Hidden then continue end
 local aA=ContainsText(az.Title or"",aw)
 local aB={}
 
@@ -37524,6 +37670,7 @@ if ay and next(ay)~=nil then
 for az,aA in next,ay do
 local aB=aq.Icons.Tab
 local b=CreateSearchTab(aA.Title,nil,aB,at,true,function()
+if aA.Tab.Hidden then return end
 aq:Close()
 am:SelectTab(az)
 end)
@@ -37538,6 +37685,7 @@ b:FindFirstChild"ParentContainer"and b.ParentContainer.Frame
 or nil,
 false,
 function()
+if aA.Tab.Hidden then return end
 aq:Close()
 am:SelectTab(az)
 if aA.Tab.ScrollToTheElement then
@@ -37637,7 +37785,11 @@ Radius=at.Radius or 8,
 Transparent=at.Transparent or false,
 HideSearchBar=at.HideSearchBar~=false,
 ScrollBarEnabled=at.ScrollBarEnabled or false,
-SideBarWidth=at.SideBarWidth or 200,
+SideBarWidth=tonumber(at.SideBarWidth)or 200,
+SideBarGap=math.max(0,tonumber(at.SideBarGap)or 12),
+ResizableSideBar=at.ResizableSideBar~=false,
+MinContentWidth=math.max(120,tonumber(at.MinContentWidth)or 300),
+_SideBarRequestedWidth=tonumber(at.SideBarWidth)or 200,
 Acrylic=false,
 NewElements=at.NewElements or false,
 IgnoreAlerts=at.IgnoreAlerts or false,
@@ -37861,7 +38013,7 @@ at.WindUI
 end
 
 au.UIElements.MainBar=am("Frame",{
-Size=UDim2.new(1,-au.UIElements.SideBarContainer.AbsoluteSize.X,1,-au.Topbar.Height),
+Size=UDim2.new(1,-au.SideBarWidth-au.SideBarGap,1,-au.Topbar.Height),
 Position=UDim2.new(1,0,1,0),
 AnchorPoint=Vector2.new(1,1),
 BackgroundTransparency=1,
@@ -37886,6 +38038,123 @@ PaddingRight=UDim.new(0,au.UIPadding/2),
 PaddingBottom=UDim.new(0,au.UIPadding/2),
 }),
 })
+
+function au._ReflowSidebar(C)
+if C._SidebarLayouting or C.Destroyed then return C end
+C._SidebarLayouting=true
+local Scale=math.max(tonumber(at.WindUI.UIScale)or 1,0.01)
+local Width=C.UIElements.Main and C.UIElements.Main.AbsoluteSize.X/Scale or C.Size.X.Offset
+if Width<=0 then Width=C.Size.X.Offset end
+local Gap=math.clamp(tonumber(C.SideBarGap)or 12,0,math.max(0,Width-240))
+local Limit=math.max(96,Width-C.MinContentWidth-Gap)
+for Pass=1,2 do
+local Desired=math.max(96,tonumber(C._SideBarRequestedWidth)or 200)
+if C.User.Enabled and C.User.AutoWidth==true and not C._SideBarManualWidth then
+Desired=math.max(Desired,tonumber(C.User.RequiredWidth)or 0)
+end
+C.SideBarWidth=math.min(Desired,Limit)
+C.UIElements.SideBarContainer.Size=UDim2.new(0,C.SideBarWidth,1,
+-C.Topbar.Height-(C.User.Enabled and C.User.Height+C.UIPadding or 0))
+C.UIElements.MainBar.Size=UDim2.new(1,-C.SideBarWidth-Gap,1,-C.Topbar.Height)
+if C.UIElements.SideBarResizeHandle then
+C.UIElements.SideBarResizeHandle.Position=UDim2.new(0,C.SideBarWidth+Gap/2,0,C.Topbar.Height)
+end
+if C.User.Reflow then C.User:Reflow()end
+end
+C._SidebarLayouting=false
+return C
+end
+function au.SetSideBarWidth(C,Width)
+if C._SideBarWidthSync then return C end
+Width=tonumber(Width)
+if not Width or Width~=Width or Width==math.huge or Width==-math.huge then return C end
+C._SideBarRequestedWidth=math.max(96,Width)
+C._SideBarManualWidth=true
+C:_ReflowSidebar()
+local Slider=C.PendingFlags and C.PendingFlags.UISidebarWidth
+if Slider and Slider.__type=="Slider"then
+C._SideBarWidthSync=true
+Slider:Set(math.clamp(C._SideBarRequestedWidth,Slider.Value.Min,Slider.Value.Max))
+C._SideBarWidthSync=false
+end
+return C
+end
+function au.GetSideBarWidth(C)return C.SideBarWidth end
+function au.SetSideBarGap(C,Gap)
+Gap=tonumber(Gap)
+if not Gap or Gap~=Gap or Gap==math.huge or Gap==-math.huge then return C end
+C.SideBarGap=math.max(0,Gap)
+return C:_ReflowSidebar()
+end
+function au._StopSideBarDrag(C)
+if C._SideBarDragChanged then C._SideBarDragChanged:Disconnect();C._SideBarDragChanged=nil end
+if C._SideBarDragEnded then C._SideBarDragEnded:Disconnect();C._SideBarDragEnded=nil end
+if C._SideBarDragFocus then C._SideBarDragFocus:Disconnect();C._SideBarDragFocus=nil end
+if at.WindUI.CurrentInput==C._SideBarDragToken then at.WindUI.CurrentInput=nil end
+C._SideBarDragging=false
+C._SideBarDragInput=nil
+if C._PaintSideBarGrip then C:_PaintSideBarGrip()end
+end
+au._SideBarDragToken=at.WindUI.GenerateGUID()
+au.UIElements.SideBarResizeHandle=am("TextButton",{
+Name="SideBarResizeHandle",Size=UDim2.new(0,18,1,-au.Topbar.Height),
+Position=UDim2.new(0,au.SideBarWidth+au.SideBarGap/2,0,au.Topbar.Height),
+AnchorPoint=Vector2.new(0.5,0),BackgroundTransparency=1,Active=true,Selectable=false,
+AutoButtonColor=false,Text="",Visible=au.ResizableSideBar,ZIndex=120,
+},{am("Frame",{
+Name="Line",Size=UDim2.new(0,1,1,-au.UIPadding),Position=UDim2.new(0.5,0,0,au.UIPadding/2),
+BackgroundTransparency=0.65,ThemeTag={BackgroundColor3="Text"},ZIndex=121,
+}),am("Frame",{
+Name="Grip",Size=UDim2.fromOffset(8,36),Position=UDim2.fromScale(0.5,0.5),
+AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=0.22,ThemeTag={BackgroundColor3="Accent"},ZIndex=122,
+},{am("UICorner",{CornerRadius=UDim.new(0,4)}),
+am("Frame",{Name="Left",Size=UDim2.fromOffset(1,18),Position=UDim2.new(0.5,-2,0.5,0),
+AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=0.2,ThemeTag={BackgroundColor3="Text"},ZIndex=123}),
+am("Frame",{Name="Right",Size=UDim2.fromOffset(1,18),Position=UDim2.new(0.5,2,0.5,0),
+AnchorPoint=Vector2.new(0.5,0.5),BackgroundTransparency=0.2,ThemeTag={BackgroundColor3="Text"},ZIndex=123})})})
+function au._PaintSideBarGrip(C)
+local Handle=C.UIElements.SideBarResizeHandle
+if not Handle then return end
+local Active=C._SideBarDragging or C._SideBarHandleHovered
+Handle.Line.BackgroundTransparency=Active and 0.25 or 0.65
+Handle.Grip.BackgroundTransparency=Active and 0 or 0.22
+end
+al.AddSignal(au.UIElements.SideBarResizeHandle.InputBegan,function(Input)
+if not au.ResizableSideBar or au.Closed or au.Destroyed then return end
+if Input.UserInputType~=Enum.UserInputType.MouseButton1 and Input.UserInputType~=Enum.UserInputType.Touch then return end
+if at.WindUI.CurrentInput and at.WindUI.CurrentInput~=au._SideBarDragToken then return end
+au:_StopSideBarDrag()
+at.WindUI.CurrentInput=au._SideBarDragToken
+au._SideBarDragging=true
+au._SideBarDragInput=Input
+au._SideBarDragX=Input.Position.X
+au._SideBarDragWidth=au.SideBarWidth
+au._SideBarDragChanged=ae.InputChanged:Connect(function(Move)
+if not au._SideBarDragging then return end
+local Touch=Input.UserInputType==Enum.UserInputType.Touch
+if Touch and Move~=Input or not Touch and Move.UserInputType~=Enum.UserInputType.MouseMovement then return end
+local Scale=math.max(tonumber(at.WindUI.UIScale)or 1,0.01)
+local Width=au.UIElements.Main.AbsoluteSize.X/Scale
+local Limit=math.max(96,Width-au.MinContentWidth-au.SideBarGap)
+au:SetSideBarWidth(math.clamp(au._SideBarDragWidth+(Move.Position.X-au._SideBarDragX)/Scale,96,Limit))
+end)
+au._SideBarDragEnded=ae.InputEnded:Connect(function(Ended)
+if Input.UserInputType==Enum.UserInputType.Touch and Ended~=Input then return end
+if Input.UserInputType~=Enum.UserInputType.Touch and Ended.UserInputType~=Enum.UserInputType.MouseButton1 then return end
+au:_StopSideBarDrag()
+end)
+au._SideBarDragFocus=ae.WindowFocusReleased:Connect(function()au:_StopSideBarDrag()end)
+au:_PaintSideBarGrip()
+end)
+al.AddSignal(au.UIElements.SideBarResizeHandle.MouseEnter,function()
+au._SideBarHandleHovered=true
+au:_PaintSideBarGrip()
+end)
+al.AddSignal(au.UIElements.SideBarResizeHandle.MouseLeave,function()
+au._SideBarHandleHovered=false
+au:_PaintSideBarGrip()
+end)
+al.AddSignal(au.UIElements.SideBarResizeHandle.Destroying,function()au:_StopSideBarDrag()end)
 
 local aA=am("ImageLabel",{
 Image="rbxassetid://8992230677",
@@ -38180,6 +38449,7 @@ CornerRadius=UDim.new(0,au.UICorner),
 }),
 au.UIElements.SideBarContainer,
 au.UIElements.MainBar,
+au.UIElements.SideBarResizeHandle,
 
 aB,
 
@@ -38291,11 +38561,16 @@ PaddingBottom=UDim.new(0,6),
 .Setup(au)a.F()
 .New(au,at.StatsBar)
 function au.RefreshAuxiliaryUI(x)
+x:_ReflowSidebar()
+if x.Closed or x.Destroyed then x:_StopSideBarDrag()end
 if x._KeybindRouter then x._KeybindRouter:RefreshVisibility()end
 x.StatsBar:RefreshVisibility()
 x:_RefreshAppearanceVisibility()
 end
 
+al.AddSignal(au.UIElements.Main:GetPropertyChangedSignal"AbsoluteSize",function()au:_ReflowSidebar()end)
+al.AddSignal(at.WindUI.UIScaleObj:GetPropertyChangedSignal"Scale",function()au:_ReflowSidebar()end)
+au:_ReflowSidebar()
 local x=au.UIElements.Main.Main.Topbar
 local function ReflowTopbar()
 local z=math.max(tonumber(at.WindUI.UIScale)or 1,0.01)
@@ -38941,6 +39216,7 @@ end)
 end
 
 au.Destroyed=true
+if au._ReleaseSelectTab then au._ReleaseSelectTab()end
 
 task.wait(0.4)
 
@@ -39134,7 +39410,9 @@ return G.New(J,at.WindUI.UIScale)
 end
 
 function au.SelectTab(H,J)
-G:SelectTab(J)
+if au.Destroyed then return false end
+if H==au then return G:SelectTab(J)end
+return G:SelectTab(H)
 end
 
 function au.Section(H,J)
@@ -40087,6 +40365,32 @@ local g=aA(az)
 aa.Transparent=az.Transparent
 aa.Window=g
 
+local SelectionWindow=g
+local GlobalSelectTab=function(Tab)
+if not SelectionWindow then return false end
+return SelectionWindow:SelectTab(Tab)
+end
+local Environments={getfenv(1),getfenv(2)}
+if type(getgenv)=="function"then
+table.insert(Environments,getgenv())
+end
+local Previous={}
+for _,Environment in ipairs(Environments)do
+if type(Environment)=="table"and not Previous[Environment]then
+Previous[Environment]={Value=rawget(Environment,"SelectTab")}
+Environment.SelectTab=GlobalSelectTab
+end
+end
+function g._ReleaseSelectTab()
+SelectionWindow=nil
+for Environment,Entry in pairs(Previous)do
+if rawget(Environment,"SelectTab")==GlobalSelectTab then
+Environment.SelectTab=Entry.Value
+end
+end
+table.clear(Previous)
+g._ReleaseSelectTab=nil
+end
 
 
 
